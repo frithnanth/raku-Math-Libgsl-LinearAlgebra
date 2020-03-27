@@ -1,0 +1,2267 @@
+#!/usr/bin/env perl6
+
+use Test;
+use lib 'lib';
+use Math::Libgsl::Raw::LinearAlgebra :ALL;
+use Math::Libgsl::Raw::Complex :ALL;
+use Math::Libgsl::Raw::Matrix :ALL;
+use Math::Libgsl::Raw::Matrix::Complex64 :ALL;
+use Math::Libgsl::Raw::Permutation :ALL;
+use Math::Libgsl::Raw::BLAS :ALL;
+use Math::Libgsl::Raw::Random;
+use Math::Libgsl::Constants;
+use NativeCall;
+
+sub create-random-matrix(gsl_matrix $m, gsl_rng $r)
+{
+  for ^$m.size1 X ^$m.size2 -> ($i, $j) {
+    gsl_matrix_set($m, $i, $j, gsl_rng_uniform_pos($r));
+  }
+  return GSL_SUCCESS;
+}
+
+sub create-random-complex-matrix(gsl_matrix_complex $m, gsl_rng $r)
+{
+  my gsl_complex $mij = alloc_gsl_complex;
+  for ^$m.size1 X ^$m.size2 -> ($i, $j) {
+    mgsl_complex_rect(gsl_rng_uniform($r), gsl_rng_uniform($r), $mij);
+    mgsl_matrix_complex_set($m, $i, $j, $mij);
+  }
+  free_gsl_complex($mij);
+  return GSL_SUCCESS;
+}
+
+sub create-random-vector(gsl_vector $v, gsl_rng $r)
+{
+  for ^$v.size -> $i {
+    my num64 $vi = gsl_rng_uniform($r);
+    gsl_vector_set($v, $i, $vi);
+  }
+  return GSL_SUCCESS;
+}
+
+sub create-random-complex-vector(gsl_vector_complex $v, gsl_rng $r)
+{
+  my gsl_complex $vi = alloc_gsl_complex;
+  for ^$v.size -> $i {
+    mgsl_complex_rect(gsl_rng_uniform($r), gsl_rng_uniform($r), $vi);
+    mgsl_vector_complex_set($v, $i, $vi);
+  }
+  free_gsl_complex($vi);
+  return GSL_SUCCESS;
+}
+
+sub create-general-matrix(Int $size1, Int $size2 --> gsl_matrix)
+{
+  my gsl_matrix $m = gsl_matrix_calloc($size1, $size2);
+  for ^$size1 X ^$size2 -> ($i, $j) {
+    gsl_matrix_set($m, $i, $j, 1e0 / ($i + $j + 1e0));
+  }
+  return $m;
+}
+
+sub create-hilbert-matrix(Int $size)
+{
+  my gsl_matrix $m = gsl_matrix_calloc($size, $size);
+  for ^$size X ^$size -> ($i, $j) {
+    gsl_matrix_set($m, $i, $j, 1e0/($i + $j + 1e0));
+  }
+  return $m;
+}
+
+sub create-rank-matrix(size_t $rank, gsl_matrix $m, gsl_rng $r)
+{
+  my size_t $M = $m.size1;
+  my size_t $N = $m.size2;
+  my gsl_vector $u = gsl_vector_calloc($M);
+  my gsl_vector $v = gsl_vector_calloc($N);
+  gsl_matrix_set_zero($m);
+
+  for ^$rank -> $i {
+    create-random-vector($u, $r);
+    create-random-vector($v, $r);
+    gsl_blas_dger(1e0, $u, $v, $m);
+  }
+
+  gsl_vector_free($u);
+  gsl_vector_free($v);
+  return GSL_SUCCESS;
+}
+
+sub create-symm-matrix(gsl_matrix $m)
+{
+  my gsl_rng $r = mgsl_rng_setup(DEFAULT);
+  for ^$m.size1 -> $i {
+    for 0..$i -> $j {
+      gsl_matrix_set($m, $i, $j, gsl_rng_uniform($r));
+    }
+  }
+  if $gsl-version > 2.5 {
+    gsl_matrix_transpose_tricpy(CblasLower, CblasNonUnit, $m, $m);
+  } else {
+    gsl_matrix_transpose_tricpy('L'.ord, 0, $m, $m);
+  }
+  gsl_rng_free($r);
+  return GSL_SUCCESS;
+}
+
+sub test-num64-matrix(gsl_matrix $m1, gsl_matrix $m2 where $m1.size1 == $m2.size1 && $m1.size2 == $m2.size2 --> Bool)
+{
+  my Bool $result = True;
+  my $*TOLERANCE = 1e-12;
+  for ^$m1.size1 X ^$m1.size2 -> ($i, $j) {
+    $result &&= gsl_matrix_get($m1, $i, $j) ≅ gsl_matrix_get($m2, $i, $j);
+  }
+  $result
+}
+
+sub test-complex64-matrix(gsl_matrix_complex $m1, gsl_matrix_complex $m2 where $m1.size1 == $m2.size1 && $m1.size2 == $m2.size2 --> Bool)
+{
+  my Bool $result = True;
+  my $*TOLERANCE = 1e-13;
+  my gsl_complex $zres1 = alloc_gsl_complex;
+  my gsl_complex $zres2 = alloc_gsl_complex;
+  for ^$m1.size1 X ^$m1.size2 -> ($i, $j) {
+    mgsl_matrix_complex_get($m1, $i, $j, $zres1);
+    mgsl_matrix_complex_get($m2, $i, $j, $zres2);
+    $result &&= $zres1.dat[0] ≅ $zres2.dat[0];
+    $result &&= $zres1.dat[1] ≅ $zres2.dat[1];
+  }
+  free_gsl_complex($zres1);
+  free_gsl_complex($zres2);
+  $result
+}
+
+sub test-num64-vector(gsl_vector $v1, gsl_vector $v2 where $v1.size == $v2.size --> Bool)
+{
+  my $*TOLERANCE = 1e-10;
+  my Bool $result = gsl_vector_get($v1, $_) ≅ gsl_vector_get($v2, $_) for ^$v1.size;
+  $result
+}
+
+sub test-complex64-vector(gsl_vector_complex $v1, gsl_vector_complex $v2 where $v1.size == $v2.size --> Bool)
+{
+  my Bool $result = True;
+  my $*TOLERANCE = 1e-13;
+  my gsl_complex $zres1 = alloc_gsl_complex;
+  my gsl_complex $zres2 = alloc_gsl_complex;
+  for ^$v1.size -> $i {
+    mgsl_vector_complex_get($v1, $i, $zres1);
+    mgsl_vector_complex_get($v2, $i, $zres2);
+    $result &&= $zres1.dat[0] ≅ $zres2.dat[0];
+    $result &&= $zres1.dat[1] ≅ $zres2.dat[1]
+  }
+  free_gsl_complex($zres1);
+  free_gsl_complex($zres2);
+  $result
+}
+
+sub LU-decomp-num64(gsl_matrix $m --> Bool)
+{
+  my int32 $signum;
+  my gsl_permutation $p = gsl_permutation_alloc(10);
+  my gsl_matrix $A = gsl_matrix_calloc(10, 10);
+  my gsl_matrix $PLU = gsl_matrix_calloc(10, 10);
+  gsl_matrix_memcpy($A, $m);
+  gsl_linalg_LU_decomp($A, $p, $signum);
+
+  my gsl_vector_view $vv1 = alloc_gsl_vector_view();
+  my gsl_vector_view $vv2 = alloc_gsl_vector_view();
+  for ^10 -> $j {
+    my gsl_vector $v1 = mgsl_matrix_subcolumn($vv1, $A, $j, $j, 10 - $j);
+    my gsl_vector $v2 = mgsl_matrix_subcolumn($vv2, $PLU, $j, $j, 10 - $j);
+    gsl_vector_memcpy($v2, $v1);
+    gsl_matrix_set($PLU, $j, $j, 1e0);
+  }
+  free_gsl_vector_view($vv1);
+  free_gsl_vector_view($vv2);
+  gsl_blas_dtrmm(CblasRight, CblasUpper, CblasNoTrans, CblasNonUnit, 1e0, $A, $PLU);
+  my gsl_vector_view $vv = alloc_gsl_vector_view();
+  for ^10 -> $j {
+    my gsl_vector $v = mgsl_matrix_column($vv, $PLU, $j);
+    gsl_permute_vector_inverse($p, $v);
+  }
+  free_gsl_vector_view($vv);
+  my Bool $res = test-num64-matrix($m, $PLU);
+  gsl_matrix_free($A);
+  gsl_matrix_free($PLU);
+  gsl_permutation_free($p);
+  return $res;
+}
+
+sub LU-decomp-complex64(gsl_matrix_complex $cm --> Bool)
+{
+  my int32 $signum;
+  my gsl_permutation $p = gsl_permutation_alloc(10);
+  my gsl_matrix_complex $cA = gsl_matrix_complex_alloc(10, 10);
+  my gsl_matrix_complex $cPLU = gsl_matrix_complex_calloc(10, 10);
+  gsl_matrix_complex_memcpy($cA, $cm);
+  gsl_linalg_complex_LU_decomp($cA, $p, $signum);
+  my gsl_complex $one = alloc_gsl_complex;
+  mgsl_complex_rect(1e0, 0e0, $one);
+  my gsl_vector_complex_view $vv1 = alloc_gsl_vector_complex_view();
+  my gsl_vector_complex_view $vv2 = alloc_gsl_vector_complex_view();
+  for ^10 -> $j {
+    my gsl_vector_complex $v1 = mgsl_matrix_complex_subcolumn($vv1, $cA, $j, $j, 10 - $j);
+    my gsl_vector_complex $v2 = mgsl_matrix_complex_subcolumn($vv2, $cPLU, $j, $j, 10 - $j);
+    gsl_vector_complex_memcpy($v2, $v1);
+    mgsl_matrix_complex_set($cPLU, $j, $j, $one);
+  }
+  free_gsl_vector_complex_view($vv1);
+  free_gsl_vector_complex_view($vv2);
+  mgsl_blas_ztrmm(CblasRight, CblasUpper, CblasNoTrans, CblasNonUnit, $one, $cA, $cPLU);
+  my gsl_vector_complex_view $vv = alloc_gsl_vector_complex_view();
+  for ^10 -> $j {
+    my gsl_vector_complex $v = mgsl_matrix_complex_column($vv, $cPLU, $j);
+    gsl_permute_vector_complex_inverse($p, $v);
+  }
+  free_gsl_vector_complex_view($vv);
+  my Bool $res = test-complex64-matrix($cm, $cPLU);
+  gsl_matrix_complex_free($cA);
+  gsl_matrix_complex_free($cPLU);
+  free_gsl_complex($one);
+  gsl_permutation_free($p);
+  return $res;
+}
+
+sub LU-solve-num64(gsl_matrix $m, gsl_rng $r --> Array[Bool])
+{
+  my int32 $signum;
+  my Bool @res;
+  my gsl_permutation $p = gsl_permutation_alloc(10);
+  my gsl_vector $rhs = gsl_vector_calloc(10);
+  my gsl_vector $sol = gsl_vector_calloc(10);
+  @res.push: create-random-vector($sol, $r) == GSL_SUCCESS;
+  gsl_blas_dgemv(CblasNoTrans, 1e0, $m, $sol, 0e0, $rhs);
+  my gsl_matrix $lu  = gsl_matrix_calloc(10, 10);
+  my gsl_vector $x = gsl_vector_calloc(10);
+  my gsl_vector $residual = gsl_vector_calloc(10);
+  gsl_matrix_memcpy($lu, $m);
+
+  gsl_linalg_LU_decomp($lu, $p, $signum);
+  @res.push: gsl_linalg_LU_solve($lu, $p, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+  @res.push: gsl_linalg_LU_refine($m, $lu, $p, $rhs, $x, $residual) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_matrix_free($lu);
+  gsl_vector_free($rhs);
+  gsl_vector_free($sol);
+  gsl_vector_free($residual);
+  gsl_vector_free($x);
+  gsl_permutation_free($p);
+  return @res;
+}
+
+sub LU-solve-complex64(gsl_matrix_complex $cm, gsl_rng $r --> Array[Bool])
+{
+  my int32 $signum;
+  my Bool @res;
+  my gsl_permutation $p = gsl_permutation_alloc(10);
+  my gsl_vector_complex $crhs = gsl_vector_complex_alloc(10);
+  my gsl_vector_complex $csol = gsl_vector_complex_alloc(10);
+  @res.push: create-random-complex-vector($csol, $r) == GSL_SUCCESS;
+  my gsl_complex $zero = alloc_gsl_complex;
+  mgsl_complex_rect(0e0, 0e0, $zero);
+  my gsl_complex $one = alloc_gsl_complex;
+  mgsl_complex_rect(1e0, 0e0, $one);
+  mgsl_blas_zgemv(CblasNoTrans, $one, $cm, $csol, $zero, $crhs);
+  my gsl_matrix_complex $clu  = gsl_matrix_complex_alloc(10, 10);
+  my gsl_vector_complex $cx = gsl_vector_complex_alloc(10);
+  my gsl_vector_complex $cresidual = gsl_vector_complex_alloc(10);
+  gsl_matrix_complex_memcpy($clu, $cm);
+  gsl_linalg_complex_LU_decomp($clu, $p, $signum);
+  @res.push: gsl_linalg_complex_LU_solve($clu, $p, $crhs, $cx) == GSL_SUCCESS;
+  @res.push: test-complex64-vector($cx, $csol);
+  @res.push: gsl_linalg_complex_LU_refine($cm, $clu, $p, $crhs, $cx, $cresidual) == GSL_SUCCESS;
+  @res.push: test-complex64-vector($cx, $csol);
+
+  gsl_matrix_complex_free($clu);
+  gsl_vector_complex_free($crhs);
+  gsl_vector_complex_free($csol);
+  gsl_vector_complex_free($cresidual);
+  gsl_vector_complex_free($cx);
+  free_gsl_complex($zero);
+  free_gsl_complex($one);
+  gsl_permutation_free($p);
+  return @res;
+}
+
+sub LU-invert-num64(gsl_matrix $m --> Array[Bool])
+{
+  my int32 $signum;
+  my Bool @res;
+  my gsl_permutation $p = gsl_permutation_alloc(10);
+  my gsl_matrix $lu  = gsl_matrix_calloc(10, 10);
+  my gsl_matrix $inv = gsl_matrix_calloc(10, 10);
+  my gsl_matrix $c   = gsl_matrix_calloc(10, 10);
+  gsl_matrix_memcpy($lu, $m);
+  gsl_linalg_LU_decomp($lu, $p, $signum);
+
+  @res.push: gsl_linalg_LU_invert($lu, $p, $inv) == GSL_SUCCESS;
+
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $m, $inv, 0e0, $c);
+  @res.push: True;
+  for ^10 -> $i {
+    for ^10 -> $j {
+      @res[1] &&= gsl_matrix_get($c, $i, $j) ≅ ($i == $j ?? 1e0 !! 0e0);
+    }
+  }
+
+  gsl_matrix_free($c);
+  gsl_matrix_free($inv);
+  gsl_matrix_free($lu);
+  gsl_permutation_free($p);
+  return @res;
+}
+
+sub LU-invert-complex64(gsl_matrix_complex $cm --> Array[Bool])
+{
+  my int32 $signum;
+  my gsl_permutation $p = gsl_permutation_alloc(10);
+  my gsl_matrix_complex $clu  = gsl_matrix_complex_alloc(10, 10);
+  my gsl_matrix_complex $cinv = gsl_matrix_complex_alloc(10, 10);
+  my gsl_matrix_complex $cc   = gsl_matrix_complex_alloc(10, 10);
+  my gsl_complex $zero = alloc_gsl_complex;
+  mgsl_complex_rect(0e0, 0e0, $zero);
+  my gsl_complex $one = alloc_gsl_complex;
+  mgsl_complex_rect(1e0, 0e0, $one);
+  gsl_matrix_complex_memcpy($clu, $cm);
+  gsl_linalg_complex_LU_decomp($clu, $p, $signum);
+
+  my Bool @res;
+  @res.push: gsl_linalg_complex_LU_invert($clu, $p, $cinv) == GSL_SUCCESS;
+
+  mgsl_blas_zgemm(CblasNoTrans, CblasNoTrans, $one, $cm, $cinv, $zero, $cc);
+  @res.push: True;
+  my $*TOLERANCE = 1e-13;
+  my gsl_complex $cij = alloc_gsl_complex;
+  for ^10 -> $i {
+    for ^10 -> $j {
+      mgsl_matrix_complex_get($cc, $i, $j, $cij);
+      @res[1] &&= (($cij.dat[0] // 0e0) ≅ ($i == $j ?? 1e0 !! 0e0) && ($cij.dat[1] // 0e0) ≅ 0e0);
+    }
+  }
+  free_gsl_complex($cij);
+
+  gsl_matrix_complex_free($cc);
+  gsl_matrix_complex_free($cinv);
+  gsl_matrix_complex_free($clu);
+  free_gsl_complex($zero);
+  free_gsl_complex($one);
+  gsl_permutation_free($p);
+  return @res;
+}
+
+sub LU-det-num64(gsl_matrix $m --> Num)
+{
+  my int32 $signum;
+  my gsl_permutation $p = gsl_permutation_alloc(10);
+  my gsl_matrix $lu  = gsl_matrix_calloc(10, 10);
+  gsl_matrix_memcpy($lu, $m);
+  gsl_linalg_LU_decomp($lu, $p, $signum);
+  my $ret = gsl_linalg_LU_det($lu, $signum);
+  gsl_matrix_free($lu);
+  gsl_permutation_free($p);
+  $ret;
+}
+
+sub LU-det-complex64(gsl_matrix_complex $cm, gsl_complex $res)
+{
+  my int32 $signum;
+  my gsl_permutation $p = gsl_permutation_alloc(10);
+  my gsl_matrix_complex $clu  = gsl_matrix_complex_alloc(10, 10);
+  gsl_matrix_complex_memcpy($clu, $cm);
+  gsl_linalg_complex_LU_decomp($clu, $p, $signum);
+  mgsl_linalg_complex_LU_det($clu, $signum, $res);
+  gsl_matrix_complex_free($clu);
+  gsl_permutation_free($p);
+  $res;
+}
+
+sub LU-sgndet-num64(gsl_matrix $m --> Int)
+{
+  my int32 $signum;
+  my gsl_permutation $p = gsl_permutation_alloc(10);
+  my gsl_matrix $lu  = gsl_matrix_calloc(10, 10);
+  gsl_matrix_memcpy($lu, $m);
+  gsl_linalg_LU_decomp($lu, $p, $signum);
+  my $ret = gsl_linalg_LU_sgndet($lu, $signum);
+  gsl_matrix_free($lu);
+  gsl_permutation_free($p);
+  $ret;
+}
+
+sub LU-sgndet-complex64(gsl_matrix_complex $cm --> Complex)
+{
+  my int32 $signum;
+  my gsl_permutation $p = gsl_permutation_alloc(10);
+  my gsl_matrix_complex $clu  = gsl_matrix_complex_alloc(10, 10);
+  gsl_matrix_complex_memcpy($clu, $cm);
+  gsl_linalg_complex_LU_decomp($clu, $p, $signum);
+  my gsl_complex $ret = alloc_gsl_complex;
+  mgsl_linalg_complex_LU_sgndet($clu, $signum, $ret);
+  gsl_matrix_complex_free($clu);
+  my Complex $c = $ret.dat[0] + $ret.dat[1] * i;
+  free_gsl_complex($ret);
+  gsl_permutation_free($p);
+  $c;
+}
+
+sub QR-decomp(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my $N = $m.size2;
+  my gsl_matrix $qr = gsl_matrix_calloc($M, $N);
+  my gsl_matrix $a  = gsl_matrix_calloc($M, $N);
+  my gsl_matrix $q  = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $r  = gsl_matrix_calloc($M, $N);
+  my gsl_vector $d  = gsl_vector_calloc(min($M, $N));
+  my Bool @res;
+  gsl_matrix_memcpy($qr, $m);
+
+  @res.push: gsl_linalg_QR_decomp($qr, $d) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QR_unpack($qr, $d, $q, $r) == GSL_SUCCESS;
+
+  @res.push: gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $q, $r, 0e0, $a) == GSL_SUCCESS;
+  @res.push: test-num64-matrix($a, $m);
+
+  gsl_vector_free($d);
+  gsl_matrix_free($qr);
+  gsl_matrix_free($a);
+  gsl_matrix_free($q);
+  gsl_matrix_free($r);
+  return @res;
+}
+
+sub QR-solve(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_vector $rhs = gsl_vector_calloc($dim);
+  my gsl_matrix $qr  = gsl_matrix_calloc($dim, $dim);
+  my gsl_vector $d   = gsl_vector_calloc($dim);
+  my gsl_vector $x   = gsl_vector_calloc($dim);
+  my gsl_vector $sol = gsl_vector_calloc($dim);
+  my Bool @res;
+  gsl_matrix_memcpy($qr, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$dim;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+
+  @res.push: gsl_linalg_QR_decomp($qr, $d) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QR_solve($qr, $d, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($sol);
+  gsl_vector_free($x);
+  gsl_vector_free($d);
+  gsl_matrix_free($qr);
+  gsl_vector_free($rhs);
+  return @res;
+}
+
+sub QR-lssolve(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my $N = $m.size2;
+  my gsl_vector $rhs = gsl_vector_calloc($M);
+  my gsl_matrix $qr  = gsl_matrix_calloc($M, $N);
+  my gsl_vector $d   = gsl_vector_calloc($N);
+  my gsl_vector $x   = gsl_vector_calloc($N);
+  my gsl_vector $r   = gsl_vector_calloc($M);
+  my gsl_vector $res = gsl_vector_calloc($M);
+  my gsl_vector $sol = gsl_vector_calloc($N);
+  my Bool @res;
+  gsl_matrix_memcpy($qr, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$M;
+  gsl_vector_set($sol, 0, 52.5992295702070e0);
+  gsl_vector_set($sol, 1, -337.7263113752073e0);
+  gsl_vector_set($sol, 2, 351.8823436427604e0);
+
+  @res.push: gsl_linalg_QR_decomp($qr, $d) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QR_lssolve($qr, $d, $rhs, $x, $res) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($sol);
+  gsl_vector_free($res);
+  gsl_vector_free($r);
+  gsl_vector_free($x);
+  gsl_vector_free($d);
+  gsl_matrix_free($qr);
+  gsl_vector_free($rhs);
+  return @res;
+}
+
+sub QR-QTmat(gsl_matrix $A, gsl_matrix $B)
+{
+  my $M = $A.size1;
+  my $N = $A.size2;
+  my $K = $B.size2;
+  my gsl_matrix $QR   = gsl_matrix_calloc($M, $N);
+  my gsl_matrix $work = gsl_matrix_calloc($N, $K);
+  my gsl_matrix $B1   = gsl_matrix_calloc($M, $K);
+  my gsl_vector $tau  = gsl_vector_calloc($N);
+  my @sol[$M; $K] = [
+    [-1.208620986625094, -1.0546472240861027, -0.7791902451463131, -1.168773675878457, -1.8023918740364615,],
+    [-0.7255813094089609, -0.6599481245008292, -0.6132935912751079, -0.6001656202344267, -0.9656995184226206,],
+    [-0.2706435681806497, -0.37683693893675707, 0.1454012389605544, -0.2524856382131687, -0.1832861493887159,],
+    [-0.25346494022471294, -0.034976909820802315, -0.40523345579661035, -0.3042534812505212, -0.7456694840765314,],
+    [0.3232602101781864, 0.2187167384986574, 0.39770492818806313, 0.18484732428275386, 0.6840232171558648,],
+    [-0.12627206077967576, 0.22810152457644187, -0.08358600426058016, 0.3855951837101906, 0.18596814875099849,],
+    [-0.5648471145968404, -0.12230132226051842, -0.6255138866668446, -0.6991112162503683, -0.22180105879372478,],
+    [-0.2514851779890921, 0.26868394934112794, 0.11129620314236724, 0.7323300527937038, -0.2037361807555147,],
+    [0.5294793846838799, 0.12853319270334268, 0.255770526547394, 0.34313072822437585, -0.25510668175740325,],
+    [-0.30702000923201295, 0.4330172700274453, 0.4160212523423857, -0.1256545168104251, 0.025424204736825898,],
+  ];
+
+  my Bool @res;
+  gsl_matrix_memcpy($QR, $A);
+  gsl_matrix_memcpy($B1, $B);
+
+  @res.push: gsl_linalg_QR_decomp($QR, $tau) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QR_QTmat($QR, $tau, $B1) == GSL_SUCCESS;
+
+  my $*TOLERANCE = 1e-13;
+  my Bool $pres = True;
+  for ^$M -> $i {
+    for ^$K -> $j {
+      $pres &&= gsl_matrix_get($B1, $i, $j) ≅ @sol[$i; $j];
+    }
+  }
+  @res.push: $pres;
+
+  gsl_vector_free($tau);
+  gsl_matrix_free($QR);
+  gsl_matrix_free($B1);
+  gsl_matrix_free($work);
+  return @res;
+}
+
+sub QR-QRsolve(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_vector $rhs = gsl_vector_calloc($dim);
+  my gsl_matrix $qr  = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $q   = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $r   = gsl_matrix_calloc($dim, $dim);
+  my gsl_vector $d   = gsl_vector_calloc($dim);
+  my gsl_vector $x   = gsl_vector_calloc($dim);
+  my gsl_vector $sol = gsl_vector_calloc($dim);
+  my Bool @res;
+  gsl_matrix_memcpy($qr, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$dim;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+
+  @res.push: gsl_linalg_QR_decomp($qr, $d) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QR_unpack($qr, $d, $q, $r) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QR_QRsolve($q, $r, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($sol);
+  gsl_vector_free($x);
+  gsl_vector_free($d);
+  gsl_matrix_free($qr);
+  gsl_matrix_free($q);
+  gsl_matrix_free($r);
+  gsl_vector_free($rhs);
+  return @res;
+}
+
+sub QR-update(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my $N = $m.size2;
+  my gsl_matrix $qr1  = gsl_matrix_calloc($M, $N);
+  my gsl_matrix $qr2  = gsl_matrix_calloc($M, $N);
+  my gsl_matrix $q1   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $r1   = gsl_matrix_calloc($M, $N);
+  my gsl_matrix $q2   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $r2   = gsl_matrix_calloc($M, $N);
+  my gsl_vector $d    = gsl_vector_calloc(min($M, $N));
+  my gsl_vector $sol1 = gsl_vector_calloc($N);
+  my gsl_vector $sol2 = gsl_vector_calloc($N);
+  my gsl_vector $u    = gsl_vector_calloc($M);
+  my gsl_vector $v    = gsl_vector_calloc($N);
+  my gsl_vector $w    = gsl_vector_calloc($M);
+  my Bool @res;
+  gsl_matrix_memcpy($qr1, $m);
+  gsl_matrix_memcpy($qr2, $m);
+  gsl_vector_set($u, $_, sin($_ + 1e0)) for ^$M;
+  gsl_vector_set($v, $_, cos($_ + 2e0) + sin($_ * $_ + 3e0)) for ^$N;
+
+  for ^$M -> $i {
+    my num64 $ui = gsl_vector_get($u, $i);
+    for ^$N -> $j {
+      my num64 $vj  = gsl_vector_get($v, $j);
+      my num64 $qij = gsl_matrix_get($qr1, $i, $j);
+      gsl_matrix_set($qr1, $i, $j, $qij + $ui * $vj);
+    }
+  }
+
+  @res.push: gsl_linalg_QR_decomp($qr2, $d) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QR_unpack($qr2, $d, $q2, $r2) == GSL_SUCCESS;
+
+  for ^$M -> $j {
+    my num64 $sum = 0e0;
+    for ^$M -> $i {
+      $sum += gsl_matrix_get($q2, $i, $j) * gsl_vector_get($u, $i);
+    }
+    gsl_vector_set($w, $j, $sum);
+  }
+
+  @res.push: gsl_linalg_QR_update($q2, $r2, $w, $v) == GSL_SUCCESS;
+
+  for ^$M -> $i {
+    for ^$N -> $j {
+      my num64 $sum = 0e0;
+      for 0..min($j, $M - 1) -> $k {
+        my num64 $qik = gsl_matrix_get($q2, $i, $k);
+        my num64 $rkj = gsl_matrix_get($r2, $k, $j);
+        $sum += $qik * $rkj;
+      }
+      gsl_matrix_set($qr2, $i, $j, $sum);
+    }
+  }
+
+  @res.push: test-num64-matrix($qr1, $qr2);
+
+  gsl_vector_free($sol1);
+  gsl_vector_free($sol2);
+  gsl_vector_free($d);
+  gsl_vector_free($u);
+  gsl_vector_free($v);
+  gsl_vector_free($w);
+  gsl_matrix_free($qr1);
+  gsl_matrix_free($qr2);
+  gsl_matrix_free($q1);
+  gsl_matrix_free($r1);
+  gsl_matrix_free($q2);
+  gsl_matrix_free($r2);
+  return @res;
+}
+
+sub QRPT-decomp(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my $N = $m.size2;
+  my gsl_matrix $QR   = gsl_matrix_calloc($M, $N);
+  my gsl_matrix $A    = gsl_matrix_calloc($M, $N);
+  my gsl_matrix $Q    = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $R    = gsl_matrix_calloc($M, $N);
+  my gsl_vector $tau  = gsl_vector_calloc(min($M, $N));
+  my gsl_vector $norm = gsl_vector_calloc($N);
+  my gsl_permutation $p = gsl_permutation_alloc($N);
+  my int32 $signum;
+  my Bool @res;
+  gsl_matrix_memcpy($QR, $m);
+
+  @res.push: gsl_linalg_QRPT_decomp($QR, $tau, $p, $signum, $norm) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QR_unpack($QR, $tau, $Q, $R) == GSL_SUCCESS;
+  @res.push: gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $Q, $R, 0e0, $A) == GSL_SUCCESS;
+
+  my gsl_matrix_view $mv = alloc_gsl_matrix_view();
+  for ^$M -> $i {
+    my gsl_vector $vv = mgsl_matrix_row($mv, $A, $i);
+    gsl_permute_vector_inverse($p, $vv);
+  }
+  free_gsl_matrix_view($mv);
+
+  @res.push: test-num64-matrix($A, $m);
+
+  my gsl_vector $work = gsl_vector_calloc(3 * $N);
+  my num64 $rcond;
+  gsl_linalg_QRPT_rcond($QR, $rcond, $work);
+  my $*TOLERANCE = 1e-10;
+  @res.push: $rcond ≅ 2.915362697820e-03;
+
+  gsl_vector_free($work);
+  gsl_permutation_free($p);
+  gsl_vector_free($norm);
+  gsl_vector_free($tau);
+  gsl_matrix_free($QR);
+  gsl_matrix_free($A);
+  gsl_matrix_free($Q);
+  gsl_matrix_free($R);
+  return @res;
+}
+
+sub QRPT-decomp2(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $QR   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $Q    = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $R    = gsl_matrix_calloc($M, $M);
+  my gsl_vector $rhs  = gsl_vector_calloc($M);
+  my gsl_vector $d    = gsl_vector_calloc($M);
+  my gsl_vector $x    = gsl_vector_calloc($M);
+  my gsl_vector $norm = gsl_vector_calloc($M);
+  my gsl_vector $sol  = gsl_vector_calloc($M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my int32 $signum;
+  my Bool @res;
+  gsl_matrix_memcpy($QR, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$M;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+
+  @res.push: gsl_linalg_QRPT_decomp2($QR, $Q, $R, $d, $p, $signum, $norm) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QRPT_QRsolve($Q, $R, $p, $rhs, $x) == GSL_SUCCESS;
+
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_permutation_free($p);
+  gsl_vector_free($norm);
+  gsl_vector_free($x);
+  gsl_vector_free($d);
+  gsl_vector_free($rhs);
+  gsl_vector_free($sol);
+  gsl_matrix_free($QR);
+  gsl_matrix_free($Q);
+  gsl_matrix_free($R);
+  return @res;
+}
+
+sub QRPT-solve(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_vector $sol  = gsl_vector_calloc($M);
+  my gsl_vector $rhs  = gsl_vector_calloc($M);
+  my gsl_vector $d    = gsl_vector_calloc($M);
+  my gsl_vector $x    = gsl_vector_calloc($M);
+  my gsl_vector $norm = gsl_vector_calloc($M);
+  my gsl_matrix $QR   = gsl_matrix_calloc($M, $M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my int32 $signum;
+  my Bool @res;
+  gsl_matrix_memcpy($QR, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$M;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+
+  @res.push: gsl_linalg_QRPT_decomp($QR, $d, $p, $signum, $norm) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QRPT_solve($QR, $d, $p, $rhs, $x) == GSL_SUCCESS;
+
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_permutation_free($p);
+  gsl_vector_free($norm);
+  gsl_vector_free($x);
+  gsl_vector_free($d);
+  gsl_vector_free($rhs);
+  gsl_vector_free($sol);
+  gsl_matrix_free($QR);
+  return @res;
+}
+
+sub QRPT-lssolve(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_vector $sol  = gsl_vector_calloc($M);
+  my gsl_vector $rhs  = gsl_vector_calloc($M);
+  my gsl_vector $tau  = gsl_vector_calloc($M);
+  my gsl_vector $x    = gsl_vector_calloc($M);
+  my gsl_vector $r    = gsl_vector_calloc($M);
+  my gsl_vector $res  = gsl_vector_calloc($M);
+  my gsl_vector $norm = gsl_vector_calloc($M);
+  my gsl_vector $work = gsl_vector_calloc($M);
+  my gsl_matrix $QRPT = gsl_matrix_calloc($M, $M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my int32 $signum;
+  my Bool @res;
+  gsl_matrix_memcpy($QRPT, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$M;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+
+  @res.push: gsl_linalg_QRPT_decomp($QRPT, $tau, $p, $signum, $work) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QRPT_lssolve($QRPT, $tau, $p, $rhs, $x, $res) == GSL_SUCCESS;
+
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_set_zero($r);
+
+  @res.push: test-num64-vector($r, $res);
+
+  gsl_permutation_free($p);
+  gsl_vector_free($work);
+  gsl_vector_free($norm);
+  gsl_vector_free($r);
+  gsl_vector_free($x);
+  gsl_vector_free($tau);
+  gsl_vector_free($rhs);
+  gsl_vector_free($sol);
+  gsl_matrix_free($QRPT);
+  return @res;
+}
+
+sub QRPT-lssolve2(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_vector $sol  = gsl_vector_calloc($M);
+  my gsl_vector $rhs  = gsl_vector_calloc($M);
+  my gsl_vector $tau  = gsl_vector_calloc($M);
+  my gsl_vector $x    = gsl_vector_calloc($M);
+  my gsl_vector $r    = gsl_vector_calloc($M);
+  my gsl_vector $res  = gsl_vector_calloc($M);
+  my gsl_vector $work = gsl_vector_calloc($M);
+  my gsl_matrix $QRPT = gsl_matrix_calloc($M, $M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my int32 $signum;
+  my Bool @res;
+  gsl_matrix_memcpy($QRPT, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$M;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+
+  @res.push: gsl_linalg_QRPT_decomp($QRPT, $tau, $p, $signum, $work) == GSL_SUCCESS;
+  my size_t $rank = gsl_linalg_QRPT_rank($QRPT, -1e0);
+  @res.push: gsl_linalg_QRPT_lssolve2($QRPT, $tau, $p, $rhs, $rank, $x, $res) == GSL_SUCCESS;
+
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_set_zero($r);
+
+  @res.push: test-num64-vector($r, $res);
+
+  gsl_permutation_free($p);
+  gsl_vector_free($work);
+  gsl_vector_free($r);
+  gsl_vector_free($x);
+  gsl_vector_free($tau);
+  gsl_vector_free($rhs);
+  gsl_vector_free($sol);
+  gsl_matrix_free($QRPT);
+  return @res;
+}
+
+sub QRPT-update(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $QR1  = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $QR2  = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $Q1   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $Q2   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $R1   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $R2   = gsl_matrix_calloc($M, $M);
+  my gsl_vector $d    = gsl_vector_calloc($M);
+  my gsl_vector $u    = gsl_vector_calloc($M);
+  my gsl_vector $v    = gsl_vector_calloc($M);
+  my gsl_vector $w    = gsl_vector_calloc($M);
+  my gsl_vector $norm = gsl_vector_calloc($M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my int32 $signum;
+  my Bool @res;
+  gsl_matrix_memcpy($QR1, $m);
+  gsl_matrix_memcpy($QR2, $m);
+  gsl_vector_set($u, $_, sin($_ + 1e0)) for ^$M;
+  gsl_vector_set($v, $_, cos($_ + 2e0) + sin($_ * $_ + 3e0)) for ^$M;
+  for ^$M -> $i {
+    my num64 $ui = gsl_vector_get($u, $i);
+    for ^$M -> $j {
+      my num64 $vj = gsl_vector_get($v, $j);
+      my num64 $qij = gsl_matrix_get($QR1, $i, $j);
+      gsl_matrix_set($QR1, $i, $j, $qij + $ui * $vj);
+    }
+  }
+
+  @res.push: gsl_linalg_QRPT_decomp($QR2, $d, $p, $signum, $norm) == GSL_SUCCESS;
+  @res.push: gsl_linalg_QR_unpack($QR2, $d, $Q2, $R2) == GSL_SUCCESS;
+
+  for ^$M -> $j {
+    my num64 $sum = 0e0;
+    for ^$M -> $i {
+      $sum += gsl_matrix_get($Q2, $i, $j) * gsl_vector_get($u, $i);
+    }
+    gsl_vector_set($w, $j, $sum);
+  }
+
+  @res.push: gsl_linalg_QRPT_update($Q2, $R2, $p, $w, $v) == GSL_SUCCESS;
+
+  for ^$M -> $i {
+    for ^$M -> $j {
+      my num64 $sum = 0e0;
+      for 0..min($j, $M - 1) -> $k {
+        my num64 $qik = gsl_matrix_get($Q2, $i, $k);
+        my num64 $rkj = gsl_matrix_get($R2, $k, $j);
+        $sum += $qik * $rkj;
+      }
+      gsl_matrix_set($QR2, $i, $j, $sum);
+    }
+  }
+
+  my gsl_vector_view $r_i = alloc_gsl_vector_view();
+  for ^$M -> $i {
+    my gsl_vector $v = mgsl_matrix_row($r_i, $QR2, $i);
+    gsl_permute_vector_inverse($p, $v);
+  }
+  free_gsl_vector_view($r_i);
+
+  @res.push: test-num64-matrix($QR1, $QR2);
+
+  gsl_permutation_free($p);
+  gsl_vector_free($norm);
+  gsl_vector_free($d);
+  gsl_vector_free($u);
+  gsl_vector_free($v);
+  gsl_vector_free($w);
+  gsl_matrix_free($QR1);
+  gsl_matrix_free($QR2);
+  gsl_matrix_free($Q1);
+  gsl_matrix_free($Q2);
+  gsl_matrix_free($R1);
+  gsl_matrix_free($R2);
+  return @res;
+}
+
+sub LQ-solve(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_matrix $lq  = gsl_matrix_calloc($dim, $dim);
+  my gsl_vector $rhs = gsl_vector_calloc($dim);
+  my gsl_vector $d   = gsl_vector_calloc($dim);
+  my gsl_vector $x   = gsl_vector_calloc($dim);
+  my gsl_vector $sol = gsl_vector_calloc($dim);
+  gsl_matrix_transpose_memcpy($lq, $m);
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$dim;
+  my Bool @res;
+
+  @res.push: gsl_linalg_LQ_decomp($lq, $d) == GSL_SUCCESS;
+  @res.push: gsl_linalg_LQ_solve_T($lq, $d, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($sol);
+  gsl_vector_free($x);
+  gsl_vector_free($d);
+  gsl_matrix_free($lq);
+  gsl_vector_free($rhs);
+  return @res;
+}
+
+sub LQ-LQsolve(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_matrix $lq  = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $q   = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $l   = gsl_matrix_calloc($dim, $dim);
+  my gsl_vector $rhs = gsl_vector_calloc($dim);
+  my gsl_vector $d   = gsl_vector_calloc($dim);
+  my gsl_vector $x   = gsl_vector_calloc($dim);
+  my gsl_vector $sol = gsl_vector_calloc($dim);
+  gsl_matrix_transpose_memcpy($lq, $m);
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$dim;
+  my Bool @res;
+
+  @res.push: gsl_linalg_LQ_decomp($lq, $d) == GSL_SUCCESS;
+  @res.push: gsl_linalg_LQ_unpack($lq, $d, $q, $l) == GSL_SUCCESS;
+  @res.push: gsl_linalg_LQ_LQsolve($q, $l, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($sol);
+  gsl_vector_free($x);
+  gsl_vector_free($d);
+  gsl_matrix_free($lq);
+  gsl_matrix_free($q);
+  gsl_matrix_free($l);
+  gsl_vector_free($rhs);
+  return @res;
+}
+
+sub LQ-lssolve(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_matrix $lq  = gsl_matrix_calloc($dim, $dim);
+  my gsl_vector $rhs = gsl_vector_calloc($dim);
+  my gsl_vector $d   = gsl_vector_calloc($dim);
+  my gsl_vector $x   = gsl_vector_calloc($dim);
+  my gsl_vector $r   = gsl_vector_calloc($dim);
+  my gsl_vector $res = gsl_vector_calloc($dim);
+  my gsl_vector $sol = gsl_vector_calloc($dim);
+  gsl_matrix_transpose_memcpy($lq, $m);
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$dim;
+  my Bool @res;
+
+  @res.push: gsl_linalg_LQ_decomp($lq, $d) == GSL_SUCCESS;
+  @res.push: gsl_linalg_LQ_lssolve_T($lq, $d, $rhs, $x, $res) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_set_zero($r);
+  @res.push: test-num64-vector($res, $r);
+
+  gsl_vector_free($sol);
+  gsl_vector_free($r);
+  gsl_vector_free($x);
+  gsl_vector_free($d);
+  gsl_matrix_free($lq);
+  gsl_vector_free($rhs);
+  gsl_vector_free($res);
+  return @res;
+}
+
+sub LQ-decomp(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_matrix $lq  = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $a   = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $q   = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $l   = gsl_matrix_calloc($dim, $dim);
+  my gsl_vector $d   = gsl_vector_calloc($dim);
+  gsl_matrix_memcpy($lq, $m);
+  my Bool @res;
+
+  @res.push: gsl_linalg_LQ_decomp($lq, $d) == GSL_SUCCESS;
+  @res.push: gsl_linalg_LQ_unpack($lq, $d, $q, $l) == GSL_SUCCESS;
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $l, $q, 0e0, $a);
+  @res.push: test-num64-matrix($a, $m);
+
+  gsl_matrix_free($a);
+  gsl_matrix_free($q);
+  gsl_matrix_free($l);
+  gsl_matrix_free($lq);
+  gsl_vector_free($d);
+  return @res;
+}
+
+sub COD-decomp(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $QRTZ   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $Q      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $R      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $QR     = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $Z      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $lhs    = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $rhs    = gsl_matrix_calloc($M, $M);
+  my gsl_vector $tau_Q  = gsl_vector_calloc($M);
+  my gsl_vector $tau_Z  = gsl_vector_calloc($M);
+  my gsl_vector $work   = gsl_vector_calloc($M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  gsl_matrix_memcpy($QRTZ, $m);
+  my size_t $rank;
+  my Bool @res;
+
+  @res.push: gsl_linalg_COD_decomp($QRTZ, $tau_Q, $tau_Z, $p, $rank, $work) == GSL_SUCCESS;
+  @res.push: gsl_linalg_COD_unpack($QRTZ, $tau_Q, $tau_Z, $rank, $Q, $R, $Z) == GSL_SUCCESS;
+
+  gsl_matrix_memcpy($lhs, $m);
+  gsl_permute_matrix($p, $lhs);
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $Q, $R, 0e0, $QR);
+  gsl_blas_dgemm(CblasNoTrans, CblasTrans, 1e0, $QR, $Z, 0e0, $rhs);
+
+  @res.push: test-num64-matrix($rhs, $lhs);
+
+  gsl_permutation_free($p);
+  gsl_vector_free($work);
+  gsl_vector_free($tau_Q);
+  gsl_vector_free($tau_Z);
+  gsl_matrix_free($QRTZ);
+  gsl_matrix_free($lhs);
+  gsl_matrix_free($rhs);
+  gsl_matrix_free($QR);
+  gsl_matrix_free($Q);
+  gsl_matrix_free($R);
+  gsl_matrix_free($Z);
+  return @res;
+}
+
+sub COD-lssolve(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $QRTZ   = gsl_matrix_calloc($M, $M);
+  my gsl_vector $lhs    = gsl_vector_calloc($M);
+  my gsl_vector $rhs    = gsl_vector_calloc($M);
+  my gsl_vector $tau_Q  = gsl_vector_calloc($M);
+  my gsl_vector $tau_Z  = gsl_vector_calloc($M);
+  my gsl_vector $work   = gsl_vector_calloc($M);
+  my gsl_vector $x      = gsl_vector_calloc($M);
+  my gsl_vector $r      = gsl_vector_calloc($M);
+  my gsl_vector $res    = gsl_vector_calloc($M);
+  my gsl_vector $sol    = gsl_vector_calloc($M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my size_t $rank;
+  my Bool @res;
+  gsl_matrix_memcpy($QRTZ, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$M;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+
+  @res.push: gsl_linalg_COD_decomp($QRTZ, $tau_Q, $tau_Z, $p, $rank, $work) == GSL_SUCCESS;
+  @res.push: gsl_linalg_COD_lssolve($QRTZ, $tau_Q, $tau_Z, $p, $rank, $rhs, $x, $res) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_set_zero($r);
+
+  @res.push: test-num64-vector($res, $r);
+
+  gsl_permutation_free($p);
+  gsl_vector_free($sol);
+  gsl_vector_free($res);
+  gsl_vector_free($r);
+  gsl_vector_free($x);
+  gsl_vector_free($work);
+  gsl_vector_free($tau_Q);
+  gsl_vector_free($tau_Z);
+  gsl_matrix_free($QRTZ);
+  gsl_vector_free($lhs);
+  gsl_vector_free($rhs);
+  return @res;
+}
+
+sub COD-lssolve2
+{
+  my $M = 100;
+  my $N = 50;
+  my num64 $lambda = 2.3e0;
+  my gsl_rng $rng       = mgsl_rng_setup(DEFAULT);
+  my gsl_matrix $A      = gsl_matrix_calloc($M, $N);
+  my gsl_vector $b      = gsl_vector_calloc($M);
+  create-rank-matrix(26, $A, $rng);
+  create-random-vector($b, $rng);
+  my gsl_vector $lhs    = gsl_vector_calloc($M);
+  my gsl_matrix $QRZT   = gsl_matrix_calloc($M, $N);
+  my gsl_vector $tau_Q  = gsl_vector_calloc(min($M, $N));
+  my gsl_vector $tau_Z  = gsl_vector_calloc(min($M, $N));
+  my gsl_vector $work   = gsl_vector_calloc($N);
+  my gsl_vector $x      = gsl_vector_calloc($N);
+  my gsl_vector $x_aug  = gsl_vector_calloc($N);
+  my gsl_vector $r      = gsl_vector_calloc($M);
+  my gsl_vector $res    = gsl_vector_calloc($M);
+  my gsl_permutation $p = gsl_permutation_alloc($N);
+  my size_t $rank;
+  my Bool @res;
+
+  {
+    my gsl_vector_view $v = alloc_gsl_vector_view();
+    my gsl_matrix_view $m = alloc_gsl_matrix_view();
+    my gsl_vector_view $d = alloc_gsl_vector_view();
+    my gsl_permutation $p = gsl_permutation_alloc($N);
+    my gsl_matrix $B = gsl_matrix_calloc($M + $N, $N);
+    my gsl_vector $f = gsl_vector_calloc($M + $N);
+    my gsl_vector $tau = gsl_vector_calloc($N);
+    my gsl_vector $residual = gsl_vector_calloc($M + $N);
+    my int32 $signum;
+
+    my gsl_matrix $sm = mgsl_matrix_submatrix($m, $B, 0, 0, $M, $N);
+    gsl_matrix_memcpy($sm, $A);
+    $sm = mgsl_matrix_submatrix($m, $B, $M, 0, $N, $N);
+    my gsl_vector $dv = mgsl_matrix_diagonal($d, $sm);
+    gsl_vector_set_all($dv, $lambda);
+
+    my gsl_vector $sv = mgsl_vector_subvector($v, $f, 0, $M);
+    gsl_vector_memcpy($sv, $b);
+    gsl_linalg_QRPT_decomp($B, $tau, $p, $signum, $work);
+    gsl_linalg_QRPT_lssolve($B, $tau, $p, $f, $x_aug, $residual);
+
+    free_gsl_vector_view($d);
+    free_gsl_vector_view($v);
+    free_gsl_matrix_view($m);
+    gsl_permutation_free($p);
+    gsl_matrix_free($B);
+    gsl_vector_free($f);
+    gsl_vector_free($tau);
+    gsl_vector_free($residual);
+  }
+
+  gsl_matrix_memcpy($QRZT, $A);
+
+  @res.push: gsl_linalg_COD_decomp($QRZT, $tau_Q, $tau_Z, $p, $rank, $work) == GSL_SUCCESS;
+
+  {
+    my gsl_matrix $S = gsl_matrix_calloc($rank, $rank);
+    my gsl_vector $workr = gsl_vector_calloc($rank);
+
+    @res.push: gsl_linalg_COD_lssolve2($lambda, $QRZT, $tau_Q, $tau_Z, $p, $rank, $b, $x, $res, $S, $workr) == GSL_SUCCESS;
+
+    gsl_matrix_free($S);
+    gsl_vector_free($workr);
+  }
+
+  @res.push: test-num64-vector($x, $x_aug);
+
+  if $M == $N {
+    gsl_vector_set_zero($r);
+  } else {
+    gsl_vector_memcpy($r, $b);
+    gsl_blas_dgemv(CblasNoTrans, -1e0, $A, $x, 1e0, $r);
+  }
+
+  @res.push: test-num64-vector($r, $res);
+
+  gsl_rng_free($rng);
+  gsl_vector_free($r);
+  gsl_vector_free($res);
+  gsl_vector_free($x);
+  gsl_vector_free($x_aug);
+  gsl_vector_free($tau_Q);
+  gsl_vector_free($tau_Z);
+  gsl_matrix_free($QRZT);
+  gsl_vector_free($lhs);
+  gsl_vector_free($work);
+  gsl_permutation_free($p);
+  return @res;
+}
+
+sub SV-decomp(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $v   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $a   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $q   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $dqt = gsl_matrix_calloc($M, $M);
+  my gsl_vector $d   = gsl_vector_calloc($M);
+  my gsl_vector $w   = gsl_vector_calloc($M);
+  my num64 $di1 = 0e0;
+  my Bool @res;
+  gsl_matrix_memcpy($v, $m);
+
+  @res.push: gsl_linalg_SV_decomp($v, $q, $d, $w) == GSL_SUCCESS;
+
+  for ^$M -> $i {
+    my num64 $di = gsl_vector_get($d, $i);
+    for ^$M -> $j {
+      my num64 $qji = gsl_matrix_get($q, $j, $i);
+      gsl_matrix_set($dqt, $i, $j, $qji * $di);
+    }
+  }
+
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $v, $dqt, 0e0, $a);
+
+  @res.push: test-num64-matrix($a, $m);
+
+  gsl_vector_free($w);
+  gsl_vector_free($d);
+  gsl_matrix_free($v);
+  gsl_matrix_free($a);
+  gsl_matrix_free($q);
+  gsl_matrix_free($dqt);
+  return @res;
+}
+
+sub SV-decomp-jacobi(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $v   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $a   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $q   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $dqt = gsl_matrix_calloc($M, $M);
+  my gsl_vector $d   = gsl_vector_calloc($M);
+  my num64 $di1 = 0e0;
+  my Bool @res;
+  gsl_matrix_memcpy($v, $m);
+
+  @res.push: gsl_linalg_SV_decomp_jacobi($v, $q, $d) == GSL_SUCCESS;
+
+  for ^$M -> $i {
+    my num64 $di = gsl_vector_get($d, $i);
+    for ^$M -> $j {
+      my num64 $qji = gsl_matrix_get($q, $j, $i);
+      gsl_matrix_set($dqt, $i, $j, $qji * $di);
+    }
+  }
+
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $v, $dqt, 0e0, $a);
+
+  @res.push: test-num64-matrix($a, $m);
+
+  gsl_vector_free($d);
+  gsl_matrix_free($v);
+  gsl_matrix_free($a);
+  gsl_matrix_free($q);
+  gsl_matrix_free($dqt);
+  return @res;
+}
+
+sub SV-decomp-mod(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $v   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $a   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $q   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $x   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $dqt = gsl_matrix_calloc($M, $M);
+  my gsl_vector $d   = gsl_vector_calloc($M);
+  my gsl_vector $w   = gsl_vector_calloc($M);
+  my num64 $di1 = 0e0;
+  my Bool @res;
+  gsl_matrix_memcpy($v, $m);
+
+  @res.push: gsl_linalg_SV_decomp_mod($v, $x, $q, $d, $w) == GSL_SUCCESS;
+
+  for ^$M -> $i {
+    my num64 $di = gsl_vector_get($d, $i);
+    for ^$M -> $j {
+      my num64 $qji = gsl_matrix_get($q, $j, $i);
+      gsl_matrix_set($dqt, $i, $j, $qji * $di);
+    }
+  }
+
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $v, $dqt, 0e0, $a);
+
+  @res.push: test-num64-matrix($a, $m);
+
+  gsl_vector_free($w);
+  gsl_vector_free($d);
+  gsl_matrix_free($x);
+  gsl_matrix_free($v);
+  gsl_matrix_free($a);
+  gsl_matrix_free($q);
+  gsl_matrix_free($dqt);
+  return @res;
+}
+
+sub SV-solve(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_vector $rhs = gsl_vector_calloc($dim);
+  my gsl_matrix $u   = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $q   = gsl_matrix_calloc($dim, $dim);
+  my gsl_vector $d   = gsl_vector_calloc($dim);
+  my gsl_vector $x   = gsl_vector_calloc($dim);
+  my gsl_vector $sol = gsl_vector_calloc($dim);
+  my Bool @res;
+  gsl_matrix_memcpy($u, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$dim;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+
+  @res.push: gsl_linalg_SV_decomp($u, $q, $d, $x) == GSL_SUCCESS;
+  @res.push: gsl_linalg_SV_solve($u, $q, $d, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($sol);
+  gsl_vector_free($rhs);
+  gsl_vector_free($d);
+  gsl_vector_free($x);
+  gsl_matrix_free($u);
+  gsl_matrix_free($q);
+  return @res;
+}
+
+sub Cholesky-decomp(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_matrix $V    = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $A    = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $L    = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $LT   = gsl_matrix_calloc($dim, $dim);
+  my Bool @res;
+  gsl_matrix_memcpy($V, $m);
+
+  @res.push: gsl_linalg_cholesky_decomp1($V) == GSL_SUCCESS;
+
+  if $gsl-version > 2.5 {
+    gsl_matrix_tricpy(CblasLower, CblasUnit, $L, $V);
+    gsl_matrix_transpose_tricpy(CblasLower, CblasUnit, $LT, $L);
+  } else {
+    gsl_matrix_tricpy('L'.ord, 1, $L, $V);
+    gsl_matrix_transpose_tricpy('L'.ord, 1, $LT, $L);
+  }
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $L, $LT, 0e0, $A);
+
+  @res.push: test-num64-matrix($A, $m);
+
+  my gsl_vector $work = gsl_vector_calloc(3 * $dim);
+  my num64 $rcond;
+  gsl_linalg_cholesky_rcond($V, $rcond, $work);
+  my $*TOLERANCE = 1e-12;
+  @res.push: $rcond ≅ 0.03703703703703703;
+  gsl_vector_free($work);
+
+  gsl_matrix_free($V);
+  gsl_matrix_free($A);
+  gsl_matrix_free($L);
+  gsl_matrix_free($LT);
+  return @res;
+}
+
+sub Cholesky-invert(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_matrix $v   = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $c   = gsl_matrix_calloc($dim, $dim);
+  my gsl_matrix $sol = gsl_matrix_calloc($dim, $dim);
+  my Bool @res;
+  gsl_matrix_memcpy($v, $m);
+
+  @res.push: gsl_linalg_cholesky_decomp1($v) == GSL_SUCCESS;
+  @res.push: gsl_linalg_cholesky_invert($v) == GSL_SUCCESS;
+
+  gsl_blas_dsymm(CblasLeft, CblasUpper, 1e0, $m, $v, 0e0, $c);
+
+  gsl_matrix_set_identity($sol);
+  @res.push: test-num64-matrix($c, $sol);
+
+  gsl_matrix_free($v);
+  gsl_matrix_free($c);
+  gsl_matrix_free($sol);
+  return @res;
+}
+
+sub Cholesky-solve(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_vector $rhs = gsl_vector_calloc($dim);
+  my gsl_matrix $u   = gsl_matrix_calloc($dim, $dim);
+  my gsl_vector $x   = gsl_vector_calloc($dim);
+  my gsl_vector $sol = gsl_vector_calloc($dim);
+  my Bool @res;
+  gsl_matrix_memcpy($u, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$dim;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+
+  @res.push: gsl_linalg_cholesky_decomp1($u) == GSL_SUCCESS;
+  @res.push: gsl_linalg_cholesky_solve($u, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($sol);
+  gsl_vector_free($x);
+  gsl_matrix_free($u);
+  gsl_vector_free($rhs);
+  return @res;
+}
+
+sub Cholesky-solve2(gsl_matrix $m)
+{
+  my $dim = $m.size1;
+  my gsl_vector $rhs = gsl_vector_calloc($dim);
+  my gsl_matrix $u   = gsl_matrix_calloc($dim, $dim);
+  my gsl_vector $x   = gsl_vector_calloc($dim);
+  my gsl_vector $D   = gsl_vector_calloc($dim);
+  my gsl_vector $sol = gsl_vector_calloc($dim);
+  my Bool @res;
+  gsl_matrix_memcpy($u, $m);
+  gsl_vector_set($rhs, $_, $_ + 1e0) for ^$dim;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+
+  @res.push: gsl_linalg_cholesky_decomp2($u, $D) == GSL_SUCCESS;
+  @res.push: gsl_linalg_cholesky_solve2($u, $D, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($sol);
+  gsl_vector_free($x);
+  gsl_matrix_free($u);
+  gsl_vector_free($D);
+  gsl_vector_free($rhs);
+  return @res;
+}
+
+sub Cholesky-decomp-unit(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $v   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $a   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $l   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $lt  = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $dm  = gsl_matrix_calloc($M, $M);
+  my gsl_vector $dv  = gsl_vector_calloc($M);
+  my Bool @res;
+  gsl_matrix_memcpy($v, $m);
+
+  @res.push: gsl_linalg_cholesky_decomp_unit($v, $dv) == GSL_SUCCESS;
+
+  for ^$M -> $i {
+    for ^$M -> $j {
+      my num64 $vij = gsl_matrix_get($v, $i, $j);
+      gsl_matrix_set($l,  $i, $j, $i ≥ $j ?? $vij !! 0e0);
+      gsl_matrix_set($lt, $i, $j, $i ≤ $j ?? $vij !! 0e0);
+    }
+  }
+  gsl_matrix_set_zero($dm);
+  gsl_matrix_set($dm, $_, $_, gsl_vector_get($dv, $_)) for ^$M;
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $dm, $lt, 0e0, $v);
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $l,   $v, 0e0, $a);
+
+  @res.push: test-num64-matrix($a, $m);
+
+  gsl_vector_free($dv);
+  gsl_matrix_free($v);
+  gsl_matrix_free($a);
+  gsl_matrix_free($l);
+  gsl_matrix_free($lt);
+  gsl_matrix_free($dm);
+  return @res;
+}
+
+sub Cholesky-complex-solve
+{
+  my CArray[num64] $data .= new: 66e0, 0e0, 0e0, 64e0, 126e0, 63e0, 124e0, -62e0, 61e0, -61e0, 60e0, 60e0, 0e0, -59e0,
+                   0e0, -64e0, 65e0, 0e0, 62e0, -124e0, -61e0, -122e0, -60e0, -60e0, 59e0, -59e0, -58e0, 0e0,
+                   126e0, -63e0, 62e0, 124e0, 308e0, 0e0, 180e0, -240e0, 59e0, -177e0, 174e0, 58e0, -57e0, -114e0,
+                   124e0, 62e0, -61e0, 122e0, 180e0, 240e0, 299e0, 0e0, 174e0, -58e0, 57e0, 171e0, 56e0, -112e0,
+                   61e0, 61e0, -60e0, 60e0, 59e0, 177e0, 174e0, 58e0, 119e0, 0e0, 0e0, 112e0, 55e0, -55e0,
+                   60e0, -60e0, 59e0, 59e0, 174e0, -58e0, 57e0, -171e0, 0e0, -112e0, 116e0, 0e0, -54e0, -54e0,
+                   0e0, 59e0, -58e0, 0e0, -57e0, 114e0, 56e0, 112e0, 55e0, 55e0, -54e0, 54e0, 60e0, 0e0;
+  my CArray[num64] $dsol .= new: -0.524944196428570e0, 0.209123883928571e0,
+                   1.052873883928572e0, 0.712444196428571e0,
+                   0.117568824404762e0, 0.443191964285714e0,
+                   0.412862723214286e0, -0.356696428571429e0,
+                   0.815931919642858e0, -0.265820312500000e0,
+                   0.777929687500000e0, 0.119484747023810e0,
+                   1.058733258928571e0, -0.132087053571429e0;
+  my gsl_matrix_complex_view $mv = alloc_gsl_matrix_complex_view;
+  my gsl_vector_complex_view $vv = alloc_gsl_vector_complex_view;
+  my gsl_matrix_complex $m = mgsl_matrix_complex_view_array($mv, $data, 7, 7);
+  my gsl_vector_complex $sol = mgsl_vector_complex_view_array($vv, $dsol, 7);
+  my $dim = $m.size1;
+  my Bool @res;
+  my gsl_vector_complex $rhs = gsl_vector_complex_alloc($dim);
+  my gsl_matrix_complex $u   = gsl_matrix_complex_alloc($dim, $dim);
+  my gsl_vector_complex $x   = gsl_vector_complex_calloc($dim);
+  gsl_matrix_complex_memcpy($u, $m);
+  my gsl_complex $z = alloc_gsl_complex;
+  for ^$dim -> $i {
+    mgsl_complex_rect($i + 1e0, 0e0, $z);
+    mgsl_vector_complex_set($rhs, $i, $z);
+  }
+  free_gsl_complex($z);
+
+  @res.push: gsl_linalg_complex_cholesky_decomp($u) == GSL_SUCCESS;
+  @res.push: gsl_linalg_complex_cholesky_solve($u, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-complex64-vector($x, $sol);
+
+  free_gsl_matrix_complex_view($mv);
+  free_gsl_vector_complex_view($vv);
+  gsl_vector_complex_free($x);
+  gsl_matrix_complex_free($u);
+  gsl_vector_complex_free($rhs);
+  return @res;
+}
+
+sub Cholesky-complex-decomp
+{
+  my CArray[num64] $data .= new: 59.75e0, 0e0, 49.25e0, 172.25e0, 66.75e0, -162.75e0,
+                    49.25e0, -172.25e0, 555.5e0, 0e0, -429e0, -333.5e0,
+                    66.75e0, 162.75e0, -429e0, 333.5e0, 536.5e0, 0e0;
+  my gsl_matrix_complex_view $mv = alloc_gsl_matrix_complex_view;
+  my gsl_matrix_complex $m = mgsl_matrix_complex_view_array($mv, $data, 3, 3);
+  my $dim = $m.size1;
+  my Bool @res;
+  my gsl_matrix_complex $v  = gsl_matrix_complex_alloc($dim, $dim);
+  my gsl_matrix_complex $a  = gsl_matrix_complex_alloc($dim, $dim);
+  my gsl_matrix_complex $l  = gsl_matrix_complex_alloc($dim, $dim);
+  my gsl_matrix_complex $lh = gsl_matrix_complex_alloc($dim, $dim);
+  gsl_matrix_complex_memcpy($v, $m);
+  gsl_matrix_complex_set_zero($l);
+  gsl_matrix_complex_set_zero($lh);
+
+  @res.push: gsl_linalg_complex_cholesky_decomp($v) == GSL_SUCCESS;
+
+  my gsl_complex $vij = alloc_gsl_complex;
+  my gsl_complex $cvij = alloc_gsl_complex;
+  for ^$dim -> $i {
+    for 0..$i -> $j {
+      mgsl_matrix_complex_get($v, $i, $j, $vij);
+      mgsl_matrix_complex_set($l, $i, $j, $vij);
+      mgsl_complex_conjugate($vij, $cvij);
+      mgsl_matrix_complex_set($lh, $j, $i, $cvij);
+    }
+  }
+  free_gsl_complex($cvij);
+  free_gsl_complex($vij);
+
+  my gsl_complex $zero = alloc_gsl_complex;
+  mgsl_complex_rect(0e0, 0e0, $zero);
+  my gsl_complex $one = alloc_gsl_complex;
+  mgsl_complex_rect(1e0, 0e0, $one);
+  mgsl_blas_zgemm(CblasNoTrans, CblasNoTrans, $one, $l, $lh, $zero, $a);
+  free_gsl_complex($zero);
+  free_gsl_complex($one);
+
+  my $*TOLERANCE = 1e-12;
+  my gsl_complex $aij = alloc_gsl_complex;
+  my gsl_complex $mij = alloc_gsl_complex;
+  for ^$dim X ^$dim -> ($i, $j) {
+    mgsl_matrix_complex_get($a, $i, $j, $aij);
+    mgsl_matrix_complex_get($m, $i, $j, $mij);
+    @res.push: $aij.dat[0] ≅ $mij.dat[0];
+    @res.push: $aij.dat[1] ≅ $mij.dat[1];
+  }
+  free_gsl_complex($aij);
+  free_gsl_complex($mij);
+
+  free_gsl_matrix_complex_view($mv);
+  gsl_matrix_complex_free($v);
+  gsl_matrix_complex_free($a);
+  gsl_matrix_complex_free($l);
+  gsl_matrix_complex_free($lh);
+  return @res;
+}
+
+sub Cholesky-complex-invert
+{
+  my CArray[num64] $data .= new: 92.303e0, 0.000e0, 10.858e0, 1.798e0, 10.858e0, -1.798e0, 89.027e0, 0.000e0;
+  my gsl_matrix_complex_view $mv = alloc_gsl_matrix_complex_view;
+  my gsl_matrix_complex $m = mgsl_matrix_complex_view_array($mv, $data, 2, 2);
+  my $dim = $m.size1;
+  my Bool @res;
+  my gsl_matrix_complex $v   = gsl_matrix_complex_alloc($dim, $dim);
+  my gsl_matrix_complex $c   = gsl_matrix_complex_alloc($dim, $dim);
+  my gsl_matrix_complex $sol = gsl_matrix_complex_alloc($dim, $dim);
+  my gsl_complex $af = alloc_gsl_complex;
+  my gsl_complex $bt = alloc_gsl_complex;
+  gsl_matrix_complex_set_identity($sol);
+
+  gsl_matrix_complex_memcpy($v, $m);
+
+  @res.push: gsl_linalg_complex_cholesky_decomp($v) == GSL_SUCCESS;
+  @res.push: gsl_linalg_complex_cholesky_invert($v) == GSL_SUCCESS;
+
+  mgsl_complex_rect(1e0, 0e0, $af);
+  mgsl_complex_rect(0e0, 0e0, $bt);
+  mgsl_blas_zhemm(CblasLeft, CblasUpper, $af, $m, $v, $bt, $c);
+
+  @res.push: test-complex64-matrix($c, $sol);
+
+  gsl_matrix_complex_free($v);
+  gsl_matrix_complex_free($c);
+  gsl_matrix_complex_free($sol);
+  free_gsl_complex($af);
+  free_gsl_complex($bt);
+  return @res;
+}
+
+sub mCholesky-decomp
+{
+  my $M = 2;
+  my gsl_matrix $m      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $LDLT   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $V      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $A      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $L      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $LT     = gsl_matrix_calloc($M, $M);
+  my gsl_vector $S      = gsl_vector_calloc($M);
+  my gsl_vector $E      = gsl_vector_calloc($M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my Bool @res;
+  create-symm-matrix($m);
+  my gsl_vector_view $vv = alloc_gsl_vector_view;
+  my gsl_vector $D = mgsl_matrix_diagonal($vv, $LDLT);
+  gsl_matrix_memcpy($LDLT, $m);
+
+  @res.push: gsl_linalg_mcholesky_decomp($LDLT, $p, $E) == GSL_SUCCESS;
+
+  @res[1] = True;
+  my $*TOLERANCE = 1e-12;
+  for ^$M -> $i {
+    for ($i + 1)..^$M -> $j {
+      @res[1] &&= gsl_matrix_get($m, $i, $j) ≅ gsl_matrix_get($LDLT, $i, $j);
+    }
+  }
+
+  gsl_matrix_set_identity($L);
+  gsl_matrix_set_identity($LT);
+  if $gsl-version > 2.5 {
+    gsl_matrix_tricpy(CblasLower, CblasNonUnit, $L, $LDLT);
+    gsl_matrix_transpose_tricpy(CblasLower, CblasNonUnit, $LT, $L);
+  } else {
+    gsl_matrix_tricpy('L'.ord, 0, $L, $LDLT);
+    gsl_matrix_transpose_tricpy('L'.ord, 0, $LT, $L);
+  }
+
+  my gsl_vector_view $vv1 = alloc_gsl_vector_view;
+  my gsl_vector_view $vv2 = alloc_gsl_vector_view;
+  for ^$M -> $i {
+    my $v = mgsl_matrix_column($vv1, $L, $i);
+    my $w = mgsl_matrix_row($vv2, $LT, $i);
+    my num64 $di = sqrt(gsl_vector_get($D, $i));
+    gsl_vector_scale($v, $di);
+    gsl_vector_scale($w, $di);
+  }
+  free_gsl_vector_view($vv1);
+  free_gsl_vector_view($vv2);
+
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $L, $LT, 0e0, $A);
+  gsl_matrix_memcpy($V, $m);
+  $D = mgsl_matrix_diagonal($vv, $V);
+  gsl_vector_add($D, $E);
+
+  my gsl_vector_view $vv3 = alloc_gsl_vector_view;
+  for ^$M -> $i {
+    my gsl_vector $v = mgsl_matrix_row($vv3, $V, $i);
+    gsl_permute_vector($p, $v);
+  }
+  for ^$M -> $i {
+    my gsl_vector $v = mgsl_matrix_column($vv3, $V, $i);
+    gsl_permute_vector($p, $v);
+  }
+  free_gsl_vector_view($vv3);
+
+  @res.push: test-num64-matrix($A, $V);
+
+  gsl_matrix_free($m);
+  gsl_matrix_free($LDLT);
+  gsl_matrix_free($V);
+  gsl_matrix_free($A);
+  gsl_matrix_free($L);
+  gsl_matrix_free($LT);
+  gsl_vector_free($S);
+  gsl_vector_free($E);
+  gsl_permutation_free($p);
+  free_gsl_vector_view($vv);
+  return @res;
+}
+
+sub mCholesky-solve
+{
+  my $M = 2;
+  my gsl_matrix $m      = create-hilbert-matrix(2);
+  my gsl_vector $rhs    = gsl_vector_calloc($M);
+  my gsl_vector $sol    = gsl_vector_calloc($M);
+  my gsl_vector $x      = gsl_vector_calloc($M);
+  my gsl_vector $S      = gsl_vector_calloc($M);
+  my gsl_matrix $u      = gsl_matrix_calloc($M, $M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my gsl_rng $rng       = mgsl_rng_setup(DEFAULT);
+  create-random-vector($sol, $rng);
+  my Bool @res;
+
+  gsl_blas_dsymv(CblasLower, 1e0, $m, $sol, 0e0, $rhs);
+  gsl_matrix_memcpy($u, $m);
+
+  @res.push: gsl_linalg_mcholesky_decomp($u, $p, gsl_vector) == GSL_SUCCESS;
+  @res.push: gsl_linalg_mcholesky_solve($u, $p, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_matrix_free($u);
+  gsl_matrix_free($m);
+  gsl_vector_free($rhs);
+  gsl_vector_free($sol);
+  gsl_vector_free($x);
+  gsl_vector_free($S);
+  gsl_rng_free($rng);
+  gsl_permutation_free($p);
+  return @res;
+}
+
+sub mCholesky-invert
+{
+  my $M = 2;
+  my gsl_matrix $m      = create-hilbert-matrix(2);
+  my gsl_matrix $v      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $c      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $minv   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $sol    = gsl_matrix_calloc($M, $M);
+  my gsl_vector $E      = gsl_vector_calloc($M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my Bool @res;
+  gsl_matrix_memcpy($v, $m);
+  gsl_matrix_set_identity($sol);
+
+  @res.push: gsl_linalg_mcholesky_decomp($v, $p, $E) == GSL_SUCCESS;
+  @res.push: gsl_linalg_mcholesky_invert($v, $p, $minv) == GSL_SUCCESS;
+
+  gsl_blas_dsymm(CblasLeft, CblasUpper, 1e0, $m, $minv, 0e0, $c);
+
+  @res.push: test-num64-matrix($c, $sol);
+
+  gsl_matrix_free($minv);
+  gsl_matrix_free($c);
+  gsl_matrix_free($v);
+  gsl_matrix_free($m);
+  gsl_matrix_free($sol);
+  gsl_vector_free($E);
+  gsl_permutation_free($p);
+  return @res;
+}
+
+sub pCholesky-decomp(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $LDLT   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $V      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $A      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $L      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $LT     = gsl_matrix_calloc($M, $M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my Bool @res;
+  my gsl_vector_view $vv = alloc_gsl_vector_view;
+  my gsl_vector $D = mgsl_matrix_diagonal($vv, $LDLT);
+  gsl_matrix_memcpy($LDLT, $m);
+
+  @res.push: gsl_linalg_pcholesky_decomp($LDLT, $p) == GSL_SUCCESS;
+
+  my $*TOLERANCE = 1e-12;
+  @res[1] = True;
+  for ^$M -> $i {
+    for ($i + 1)..^$M -> $j {
+      @res[1] &&= gsl_matrix_get($m, $i, $j) ≅ gsl_matrix_get($LDLT, $i, $j);
+    }
+  }
+
+  gsl_matrix_set_identity($L);
+  gsl_matrix_set_identity($LT);
+  if $gsl-version > 2.5 {
+    gsl_matrix_tricpy(CblasLower, CblasNonUnit, $L, $LDLT);
+    gsl_matrix_transpose_tricpy(CblasLower, CblasNonUnit, $LT, $L);
+  } else {
+    gsl_matrix_tricpy('L'.ord, 0, $L, $LDLT);
+    gsl_matrix_transpose_tricpy('L'.ord, 0, $LT, $L);
+  }
+
+  my gsl_vector_view $vv1 = alloc_gsl_vector_view;
+  my gsl_vector_view $vv2 = alloc_gsl_vector_view;
+  for ^$M -> $i {
+    my $v = mgsl_matrix_column($vv1, $L, $i);
+    my $w = mgsl_matrix_row($vv2, $LT, $i);
+    my num64 $di = gsl_vector_get($D, $i);
+    gsl_vector_scale($v, sqrt $di);
+    gsl_vector_scale($w, sqrt $di);
+  }
+  free_gsl_vector_view($vv1);
+  free_gsl_vector_view($vv2);
+
+  gsl_blas_dgemm(CblasNoTrans, CblasNoTrans, 1e0, $L, $LT, 0e0, $A);
+  gsl_matrix_memcpy($V, $m);
+
+  my gsl_vector_view $vv3 = alloc_gsl_vector_view;
+  for ^$M -> $i {
+    my gsl_vector $v = mgsl_matrix_row($vv3, $V, $i);
+    gsl_permute_vector($p, $v);
+  }
+  for ^$M -> $i {
+    my gsl_vector $v = mgsl_matrix_column($vv3, $V, $i);
+    gsl_permute_vector($p, $v);
+  }
+  free_gsl_vector_view($vv3);
+
+  @res.push: test-num64-matrix($A, $V);
+
+  my gsl_vector $work = gsl_vector_calloc(3 * $M);
+  my num64 $rcond;
+  gsl_linalg_pcholesky_rcond($LDLT, $p, $rcond, $work);
+  @res.push: $rcond ≅ 0.03703703703703703;
+
+  gsl_matrix_free($LDLT);
+  gsl_matrix_free($V);
+  gsl_matrix_free($A);
+  gsl_matrix_free($L);
+  gsl_matrix_free($LT);
+  gsl_vector_free($work);
+  gsl_permutation_free($p);
+  free_gsl_vector_view($vv);
+  return @res;
+}
+
+sub pCholesky-solve(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $u      = gsl_matrix_calloc($M, $M);
+  my gsl_vector $x      = gsl_vector_calloc($M);
+  my gsl_vector $sol    = gsl_vector_calloc($M);
+  my gsl_vector $rhs    = gsl_vector_calloc($M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my gsl_rng $r = mgsl_rng_setup(DEFAULT);
+  my Bool @res;
+  create-random-vector($sol, $r);
+  gsl_blas_dsymv(CblasLower, 1e0, $m, $sol, 0e0, $rhs);
+  gsl_matrix_memcpy($u, $m);
+
+  @res.push: gsl_linalg_pcholesky_decomp($u, $p) == GSL_SUCCESS;
+  @res.push: gsl_linalg_pcholesky_solve($u, $p, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_rng_free($r);
+  gsl_matrix_free($u);
+  gsl_vector_free($x);
+  gsl_vector_free($sol);
+  gsl_permutation_free($p);
+  return @res;
+}
+
+sub pCholesky-invert(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $v      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $c      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $minv   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $sol    = gsl_matrix_calloc($M, $M);
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my Bool @res;
+  gsl_matrix_memcpy($v, $m);
+  gsl_matrix_set_identity($sol);
+
+  @res.push: gsl_linalg_pcholesky_decomp($v, $p) == GSL_SUCCESS;
+  @res.push: gsl_linalg_pcholesky_invert($v, $p, $minv) == GSL_SUCCESS;
+
+  gsl_blas_dsymm(CblasLeft, CblasUpper, 1e0, $m, $minv, 0e0, $c);
+
+  @res.push: test-num64-matrix($c, $sol);
+
+  gsl_permutation_free($p);
+  gsl_matrix_free($v);
+  gsl_matrix_free($c);
+  gsl_matrix_free($minv);
+  gsl_matrix_free($sol);
+  return @res;
+}
+
+sub bidiag-decomp(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_matrix $A      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $a      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $b      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $u      = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $v      = gsl_matrix_calloc($M, $M);
+  my gsl_vector $tau1   = gsl_vector_calloc($M);
+  my gsl_vector $tau2   = gsl_vector_calloc($M - 1);
+  my gsl_vector $d      = gsl_vector_calloc($M);
+  my gsl_vector $sd     = gsl_vector_calloc($M - 1);
+  my Bool @res;
+  gsl_matrix_memcpy($A, $m);
+
+  @res.push: gsl_linalg_bidiag_decomp($A, $tau1, $tau2) == GSL_SUCCESS;
+  @res.push: gsl_linalg_bidiag_unpack($A, $tau1, $u, $tau2, $v, $d, $sd) == GSL_SUCCESS;
+
+  gsl_matrix_set_zero($b);
+  gsl_matrix_set($b, $_, $_, gsl_vector_get($d, $_)) for ^$M;
+  gsl_matrix_set($b, $_, $_ + 1, gsl_vector_get($sd, $_)) for ^($M - 1);
+  for ^$M X ^$M -> ($i, $j) {
+    my num64 $sum = 0e0;
+    for ^$M X ^$M -> ($k, $r) {
+      $sum += gsl_matrix_get($u, $i, $k) * gsl_matrix_get($b, $k, $r) * gsl_matrix_get($v, $j, $r);
+    }
+    gsl_matrix_set($a, $i, $j, $sum);
+  }
+
+  @res.push: test-num64-matrix($a, $m);
+
+  gsl_matrix_free($A);
+  gsl_matrix_free($a);
+  gsl_matrix_free($b);
+  gsl_matrix_free($u);
+  gsl_matrix_free($v);
+  gsl_vector_free($tau1);
+  gsl_vector_free($tau2);
+  gsl_vector_free($d);
+  gsl_vector_free($sd);
+  return @res;
+}
+
+sub HH-solve(gsl_matrix $m)
+{
+  my $M = $m.size1;
+  my gsl_permutation $p = gsl_permutation_alloc($M);
+  my gsl_matrix $hh     = gsl_matrix_calloc($M, $M);
+  my gsl_vector $d      = gsl_vector_calloc($M);
+  my gsl_vector $x      = gsl_vector_calloc($M);
+  my gsl_vector $sol    = gsl_vector_calloc($M);
+  my Bool @res;
+  gsl_vector_set($sol, 0, -8e0);
+  gsl_vector_set($sol, 1, 18e0);
+  gsl_matrix_memcpy($hh, $m);
+  gsl_vector_set($x, $_, $_ + 1e0) for ^$M;
+
+  @res.push: gsl_linalg_HH_svx($hh, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_matrix_free($hh);
+  gsl_vector_free($d);
+  gsl_vector_free($x);
+  gsl_vector_free($sol);
+  gsl_permutation_free($p);
+  return @res;
+}
+
+sub tridiag-symm-solve
+{
+  my $M = 2;
+  my gsl_vector $offdiag = gsl_vector_calloc($M - 1);
+  my gsl_vector $diag    = gsl_vector_calloc($M);
+  my gsl_vector $rhs     = gsl_vector_calloc($M);
+  my gsl_vector $x       = gsl_vector_calloc($M);
+  my gsl_vector $sol     = gsl_vector_calloc($M);
+  my Bool @res;
+  gsl_vector_set($sol, 0, 0e0);
+  gsl_vector_set($sol, 1, 2e0);
+  for ^$M -> $i {
+    gsl_vector_set($diag, $i, 1e0);
+    gsl_vector_set($rhs, $i, $i + 1e0);
+  }
+  for ^($M - 1) -> $i {
+    gsl_vector_set($offdiag, $i, .5e0);
+  }
+
+  @res.push: gsl_linalg_solve_symm_tridiag($diag, $offdiag, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($offdiag);
+  gsl_vector_free($diag);
+  gsl_vector_free($rhs);
+  gsl_vector_free($x);
+  gsl_vector_free($sol);
+  return @res;
+}
+
+sub tridiag-symm-cyc-solve
+{
+  my $M = 3;
+  my gsl_vector $offdiag = gsl_vector_calloc($M);
+  my gsl_vector $diag    = gsl_vector_calloc($M);
+  my gsl_vector $rhs     = gsl_vector_calloc($M);
+  my gsl_vector $x       = gsl_vector_calloc($M);
+  my gsl_vector $sol     = gsl_vector_calloc($M);
+  my Bool @res;
+  gsl_vector_set($diag, 0, 1e0);
+  gsl_vector_set($diag, 1, 1e0);
+  gsl_vector_set($diag, 2, 1e0);
+  gsl_vector_set($offdiag, 0, 3e0);
+  gsl_vector_set($offdiag, 1, 3e0);
+  gsl_vector_set($offdiag, 2, 3e0);
+  gsl_vector_set($rhs, 0,  7e0);
+  gsl_vector_set($rhs, 1, -7e0);
+  gsl_vector_set($rhs, 2,  7e0);
+  gsl_vector_set($sol, 0, -2e0);
+  gsl_vector_set($sol, 1,  5e0);
+  gsl_vector_set($sol, 2, -2e0);
+
+  @res.push: gsl_linalg_solve_symm_cyc_tridiag($diag, $offdiag, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($offdiag);
+  gsl_vector_free($diag);
+  gsl_vector_free($rhs);
+  gsl_vector_free($x);
+  gsl_vector_free($sol);
+  return @res;
+}
+
+sub tridiag-solve
+{
+  my $M = 3;
+  my gsl_vector $abovediag = gsl_vector_calloc($M - 1);
+  my gsl_vector $belowdiag = gsl_vector_calloc($M - 1);
+  my gsl_vector $diag    = gsl_vector_calloc($M);
+  my gsl_vector $rhs     = gsl_vector_calloc($M);
+  my gsl_vector $x       = gsl_vector_calloc($M);
+  my gsl_vector $sol     = gsl_vector_calloc($M);
+  my Bool @res;
+  gsl_vector_set($sol, 0, .75e0);
+  gsl_vector_set($sol, 1, .75e0);
+  gsl_vector_set($sol, 2, 2.625e0);
+  for ^$M -> $i {
+    gsl_vector_set($diag, $i, 1e0);
+    gsl_vector_set($rhs,  $i, $i + 1e0);
+  }
+  for ^($M - 1) -> $i {
+    gsl_vector_set($abovediag, $i, (1/3).Num);
+    gsl_vector_set($belowdiag, $i, .5e0);
+  }
+
+  @res.push: gsl_linalg_solve_tridiag($diag, $abovediag, $belowdiag, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($abovediag);
+  gsl_vector_free($belowdiag);
+  gsl_vector_free($diag);
+  gsl_vector_free($rhs);
+  gsl_vector_free($x);
+  gsl_vector_free($sol);
+  return @res;
+}
+
+sub tridiag-cyc-solve
+{
+  my $M = 3;
+  my gsl_vector $abovediag = gsl_vector_calloc($M);
+  my gsl_vector $belowdiag = gsl_vector_calloc($M);
+  my gsl_vector $diag      = gsl_vector_calloc($M);
+  my gsl_vector $rhs       = gsl_vector_calloc($M);
+  my gsl_vector $x         = gsl_vector_calloc($M);
+  my gsl_vector $sol       = gsl_vector_calloc($M);
+  my Bool @res;
+  gsl_vector_set($sol, 0, (3/2).Num);
+  gsl_vector_set($sol, 1, -.5e0);
+  gsl_vector_set($sol, 2, .5e0);
+  for ^$M -> $i {
+    gsl_vector_set($diag,      $i, 1e0);
+    gsl_vector_set($rhs,       $i, $i + 1e0);
+    gsl_vector_set($abovediag, $i, 2e0);
+    gsl_vector_set($belowdiag, $i, 1e0);
+  }
+
+  @res.push: gsl_linalg_solve_cyc_tridiag($diag, $abovediag, $belowdiag, $rhs, $x) == GSL_SUCCESS;
+  @res.push: test-num64-vector($x, $sol);
+
+  gsl_vector_free($abovediag);
+  gsl_vector_free($belowdiag);
+  gsl_vector_free($diag);
+  gsl_vector_free($rhs);
+  gsl_vector_free($x);
+  gsl_vector_free($sol);
+  return @res;
+}
+
+sub triang-invert
+{
+  my gsl_rng $r = mgsl_rng_setup(DEFAULT);
+  my $M = 3;
+  my gsl_matrix $T   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $B   = gsl_matrix_calloc($M, $M);
+  my gsl_matrix $sol = gsl_matrix_calloc($M, $M);
+  gsl_matrix_set_identity($sol);
+  for ^$M -> $i {
+    for 0..$i -> $j {
+      my num64 $mij = gsl_rng_uniform($r);
+      $mij = max($mij, .3e0) if $i == $j;
+      gsl_matrix_set($T, $i, $j, $mij);
+    }
+  }
+  gsl_matrix_memcpy($B, $T);
+  gsl_linalg_tri_lower_invert($B);
+  gsl_blas_dtrmm(CblasLeft, CblasLower, CblasNoTrans, CblasNonUnit, 1e0, $T, $B);
+
+  my $res = test-num64-matrix($B, $sol);
+
+  gsl_rng_free($r);
+  gsl_matrix_free($T);
+  gsl_matrix_free($B);
+  gsl_matrix_free($sol);
+  return $res;
+}
+
+subtest 'LU decomposition' => {
+  my gsl_rng $r = mgsl_rng_setup(DEFAULT);
+  my gsl_matrix $m = gsl_matrix_calloc(10, 10);
+  ok create-random-matrix($m, $r) == GSL_SUCCESS, 'can create a random matrix';
+  my gsl_matrix_complex $cm = gsl_matrix_complex_alloc(10, 10);
+  ok create-random-complex-matrix($cm, $r) == GSL_SUCCESS, 'can create a random complex matrix';
+
+  ok LU-decomp-num64($m), 'LU num64 decomposition';
+  ok LU-decomp-complex64($cm), 'LU complex decomposition';
+  is-deeply LU-solve-num64($m, $r), Array[Bool].new(True xx 5), 'LU num64 solve';
+  is-deeply LU-solve-complex64($cm, $r), Array[Bool].new(True xx 5), 'LU complex solve';
+  is-deeply LU-invert-num64($m), Array[Bool].new(True xx 2), 'LU num64 invert';
+  is-deeply LU-invert-complex64($cm), Array[Bool].new(True xx 2), 'LU complex invert';
+  is-approx LU-det-num64($m), 0.017475253193805475, 'num64 determinant';
+  my gsl_complex $cres = alloc_gsl_complex;
+  LU-det-complex64($cm, $cres);
+  ok $cres.dat[0] ≅ 1.2669771918585264 && $cres.dat[1] ≅ -0.4448915095767637, 'complex determinant';
+  is-approx gsl_linalg_LU_lndet($m), -8.682022026520569, 'num64 ln determinant';
+  is-approx gsl_linalg_complex_LU_lndet($cm), -1.3441985858994467, 'complex ln determinant';
+  ok LU-sgndet-num64($m) == 1, 'num64 sign of determinant';
+  is-approx LU-sgndet-complex64($cm), 0.9435212924956552-0.33131189324762783i, 'complex phase of determinant';
+
+  gsl_matrix_free($m);
+  gsl_matrix_complex_free($cm);
+  gsl_rng_free($r);
+}
+
+subtest 'QR decomposition' => {
+  my gsl_rng $r = mgsl_rng_setup(DEFAULT);
+  my gsl_matrix $m35 = create-general-matrix(3, 5);
+  my gsl_matrix $m53 = create-general-matrix(5, 3);
+  my gsl_matrix $hilb2 = create-hilbert-matrix(2);
+  my gsl_matrix $A = gsl_matrix_calloc(10, 10);
+  my gsl_matrix $S = gsl_matrix_calloc(10, 10);
+  my gsl_matrix $B = gsl_matrix_calloc(10, 5);
+  create-random-matrix($A, $r);
+  create-random-matrix($B, $r);
+  create-random-matrix($S, $r);
+
+  is-deeply QR-decomp($m35),      Array[Bool].new(True xx 4), 'QR decomposition';
+  is-deeply QR-solve($hilb2),     Array[Bool].new(True xx 3), 'QR solve';
+  is-deeply QR-lssolve($m53),     Array[Bool].new(True xx 3), 'QR least square solve';
+  is-deeply QR-QTmat($A, $B),     Array[Bool].new(True xx 3), 'QR QTmat';
+  is-deeply QR-QRsolve($hilb2),   Array[Bool].new(True xx 4), 'QR QRsolve';
+  is-deeply QR-update($m35),      Array[Bool].new(True xx 4), 'QR update';
+
+  gsl_matrix_free($S);
+  gsl_matrix_free($A);
+  gsl_matrix_free($B);
+  gsl_matrix_free($hilb2);
+  gsl_matrix_free($m53);
+  gsl_matrix_free($m35);
+}
+
+subtest 'QR decomposition with column pivoting' => {
+  my gsl_matrix $m53 = create-general-matrix(5, 3);
+  my gsl_matrix $hilb2 = create-hilbert-matrix(2);
+
+  is-deeply QRPT-decomp($m53), Array[Bool].new(True xx 5), 'QRPT decomp';
+  is-deeply QRPT-decomp2($hilb2), Array[Bool].new(True xx 3), 'QRPT decomp2';
+  is-deeply QRPT-solve($hilb2), Array[Bool].new(True xx 3), 'QRPT solve';
+  is-deeply QRPT-lssolve($hilb2), Array[Bool].new(True xx 4), 'QRPT lssolve';
+  is-deeply QRPT-lssolve2($hilb2), Array[Bool].new(True xx 4), 'QRPT lssolve2';
+  is-deeply QRPT-update($hilb2), Array[Bool].new(True xx 4), 'QRPT update';
+
+  gsl_matrix_free($hilb2);
+  gsl_matrix_free($m53);
+}
+
+subtest 'LQ decomposition' => {
+  my gsl_matrix $hilb2 = create-hilbert-matrix(2);
+
+  is-deeply LQ-solve($hilb2), Array[Bool].new(True xx 3), 'LQ decomp';
+  is-deeply LQ-LQsolve($hilb2), Array[Bool].new(True xx 4), 'LQ solve';
+  is-deeply LQ-lssolve($hilb2), Array[Bool].new(True xx 4), 'LQ lssolve';
+  is-deeply LQ-decomp($hilb2), Array[Bool].new(True xx 3), 'LQ lssolve';
+
+  gsl_matrix_free($hilb2);
+}
+
+subtest 'Complete Orthogonal Decomposition' => {
+  my gsl_matrix $hilb2 = create-hilbert-matrix(2);
+
+  is-deeply COD-decomp($hilb2), Array[Bool].new(True xx 3), 'COD decomp';
+  is-deeply COD-lssolve($hilb2), Array[Bool].new(True xx 4), 'COD lssolve';
+  is-deeply COD-lssolve2, Array[Bool].new(True xx 4), 'COD lssolve2';
+
+  gsl_matrix_free($hilb2);
+}
+
+subtest 'Singular Value Decomposition' => {
+  my gsl_matrix $hilb2 = create-hilbert-matrix(2);
+
+  is-deeply SV-decomp($hilb2), Array[Bool].new(True xx 2), 'SV decomp';
+  is-deeply SV-decomp-jacobi($hilb2), Array[Bool].new(True xx 2), 'SV decomp_jacobi';
+  is-deeply SV-decomp-mod($hilb2), Array[Bool].new(True xx 2), 'SV decomp_mod';
+  is-deeply SV-solve($hilb2), Array[Bool].new(True xx 3), 'SV solve';
+
+  gsl_matrix_free($hilb2);
+}
+
+subtest 'Cholesky Decomposition' => {
+  my gsl_matrix $hilb2 = create-hilbert-matrix(2);
+
+  is-deeply Cholesky-decomp($hilb2), Array[Bool].new(True xx 3), 'Cholesky num64 decomp';
+  is-deeply Cholesky-invert($hilb2), Array[Bool].new(True xx 3), 'Cholesky num64 invert';
+  is-deeply Cholesky-solve($hilb2), Array[Bool].new(True xx 3), 'Cholesky num64 solve';
+  is-deeply Cholesky-solve2($hilb2), Array[Bool].new(True xx 3), 'scaled Cholesky solve';
+  is-deeply Cholesky-decomp-unit($hilb2), Array[Bool].new(True xx 2), 'Cholesky decomp unit';
+  is-deeply Cholesky-complex-solve, Array[Bool].new(True xx 3), 'Cholesky complex64 solve';
+  is-deeply Cholesky-complex-decomp, Array[Bool].new(True xx 19), 'Cholesky complex64 decomp';
+  is-deeply Cholesky-complex-invert, Array[Bool].new(True xx 3), 'Cholesky complex64 invert';
+  is-deeply mCholesky-decomp, Array[Bool].new(True xx 3), 'modified Cholesky decomp';
+  is-deeply mCholesky-solve, Array[Bool].new(True xx 3), 'modified Cholesky solve';
+  is-deeply mCholesky-invert, Array[Bool].new(True xx 3), 'modified Cholesky invert';
+  is-deeply pCholesky-decomp($hilb2), Array[Bool].new(True xx 4), 'pivoted Cholesky decomp';
+  is-deeply pCholesky-solve($hilb2), Array[Bool].new(True xx 3), 'pivoted Cholesky solve';
+  is-deeply pCholesky-invert($hilb2), Array[Bool].new(True xx 3), 'pivoted Cholesky invert';
+
+  gsl_matrix_free($hilb2);
+}
+
+my gsl_matrix $hilb2 = create-hilbert-matrix(2);
+is-deeply bidiag-decomp($hilb2), Array[Bool].new(True xx 3), 'bidiag decomp';
+is-deeply HH-solve($hilb2), Array[Bool].new(True xx 2), 'Householder solver';
+gsl_matrix_free($hilb2);
+
+subtest 'tridiagonal systems' => {
+  is-deeply tridiag-symm-solve, Array[Bool].new(True xx 2), 'symmetric tridiagonal solver';
+  is-deeply tridiag-symm-cyc-solve, Array[Bool].new(True xx 2), 'symmetric cyclic tridiagonal solver';
+  is-deeply tridiag-solve, Array[Bool].new(True xx 2), 'tridiagonal solver';
+  is-deeply tridiag-cyc-solve, Array[Bool].new(True xx 2), 'cyclic tridiagonal solver';
+}
+
+ok triang-invert, 'triangular system inversion';
+
+done-testing;
