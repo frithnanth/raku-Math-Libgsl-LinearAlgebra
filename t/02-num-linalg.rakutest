@@ -1,0 +1,843 @@
+#!/usr/bin/env perl6
+
+use Test;
+use lib 'lib';
+use Math::Libgsl::LinearAlgebra;
+use Math::Libgsl::Vector;
+use Math::Libgsl::Matrix;
+use Math::Libgsl::Permutation;
+use Math::Libgsl::Random;
+use Math::Libgsl::BLAS;
+use Math::Libgsl::Constants;
+use NativeCall;
+
+sub create-random-matrix(Math::Libgsl::Matrix $m, Math::Libgsl::Random $r --> Int)
+{
+  for ^$m.matrix.size1 X ^$m.matrix.size2 -> ($i, $j) {
+    $m[$i;$j] = $r.get-uniform-pos;
+  }
+  return GSL_SUCCESS;
+}
+
+sub create-random-vector(Math::Libgsl::Vector $v, Math::Libgsl::Random $r --> Int)
+{
+  for ^$v.vector.size -> $i {
+    $v[$i] = $r.get-uniform-pos;
+  }
+  return GSL_SUCCESS;
+}
+
+sub create-general-matrix(Math::Libgsl::Matrix $m)
+{
+  for ^$m.matrix.size1 X ^$m.matrix.size2 -> ($i, $j) {
+    $m[$i; $j] = 1e0 / ($i + $j + 1e0);
+  }
+}
+
+sub create-hilbert-matrix(Math::Libgsl::Matrix $m)
+{
+  for ^$m.matrix.size1 X ^$m.matrix.size2 -> ($i, $j) {
+    $m[$i; $j] = 1e0/($i + $j + 1e0);
+  }
+}
+
+sub create-rank-matrix(size_t $rank, Math::Libgsl::Matrix $m, Math::Libgsl::Random $r --> Int)
+{
+  my $M = $m.matrix.size1;
+  my $N = $m.matrix.size2;
+  my Math::Libgsl::Vector $u .= new: $M;
+  my Math::Libgsl::Vector $v .= new: $N;
+
+  for ^$rank -> $i {
+    create-random-vector($u, $r);
+    create-random-vector($v, $r);
+    dger(1e0, $u, $v, $m);
+  }
+
+  return GSL_SUCCESS;
+}
+
+sub create-symm-matrix(Math::Libgsl::Matrix $m)
+{
+  my Math::Libgsl::Random $r .= new;
+  for ^$m.matrix.size1 -> $i {
+    for 0..$i -> $j {
+      $m[$i; $j] = $r.get-uniform-pos;
+    }
+  }
+  $m.transpose-tricpy($m, CblasLower, CblasNonUnit);
+  return GSL_SUCCESS;
+}
+
+sub create-posdef-band-matrix(Math::Libgsl::Matrix $m)
+{
+  create-symm-matrix($m);
+  my $size = $m.matrix.size1;
+  my $α = $size * 10e0;
+  $m[$_; $_] = $m[$_; $_] + $α for ^$size;
+}
+
+sub symm-to-band(Math::Libgsl::Matrix $m, Math::Libgsl::Matrix $u)
+{
+  my $M = $m.matrix.size1;
+  my Math::Libgsl::Vector::View $view1 .= new;
+  my Math::Libgsl::Vector::View $view2 .= new;
+  for ^$M {
+    my Math::Libgsl::Vector $vv1 = $m.subdiagonal-view($view1, $_);
+    my Math::Libgsl::Vector $vv2 = $u.subcol-view($view2, $_, 0, $M - $_);
+    $vv2.copy($vv1);
+  }
+}
+
+subtest 'LU decomposition' => {
+  my $*TOLERANCE = 1e-12;
+  my Math::Libgsl::Random $r      .= new;
+  my Math::Libgsl::Matrix $m      .= new(10, 10);
+  my Math::Libgsl::Matrix $A      .= new(10, 10);
+  my Math::Libgsl::Vector $b      .= new(10);
+  ok create-random-matrix($m, $r) == GSL_SUCCESS, 'can create a random matrix';
+  ok create-random-vector($b, $r) == GSL_SUCCESS, 'can create a random vector';
+
+  $A.copy($m);
+  my ($signum, $p) = LU-decomp($A);
+  ok $signum == -1, 'permutation sign';
+  my @sol1 = 0.999741748906672e0, 0.16290987539105117e0, 0.28261780529282987e0, 0.9472010820172727e0,
+             0.23165654274635017e0, 0.48497361433692276e0, 0.9574769565369934e0, 0.7443053431343287e0,
+             0.5400436583440751e0, 0.7399529814720154e0, 0.499022899013741e0, 0.6425063204525122e0,
+             0.0035177683747059374e0, -0.4303718665717976e0, 0.19518510304267706e0, -0.12037178526907077e0,
+             -0.2357332556594393e0, 0.009633445365608229e0, 0.17063438514690155e0, 0.23054241973420175e0,
+             0.18245795991271174e0, 0.7491098476129922e0, 0.686587142174087e0, 0.515560053175852e0,
+             -0.027673826178128774e0, 0.4617911786127301e0, 0.6297272827275225e0, 0.5345827448408003e0,
+             0.4718373602385013e0, 0.1708249594233042e0, 0.030343040333473376e0, 0.5114285392398699e0,
+             0.2676634453699523e0, 0.9970836950352449e0, 0.48048655070164487e0, 0.8215462322357204e0,
+             0.5885169099991214e0, 0.32801074453308043e0, 0.33068078288375435e0, -0.0037973478102040215e0,
+             0.29660212857391954e0, 0.10753126521068211e0, -0.031002105323639315e0, 0.4307016533401094e0,
+             0.42791590511605626e0, 0.16670586055124165e0, 0.2212917196271707e0, -0.24692378187564057e0,
+             0.3929437579470931e0, -0.1295182202387101e0, 0.7601401051976446e0, 0.8323689084541823e0,
+             0.14256080005331967e0, 0.37020662716221897e0, 0.016780335911895615e0, -0.47265430073583137e0,
+             -0.36743050635638536e0, -0.37497975943257994e0, -0.5271513701209063e0, -0.5619476008133676e0,
+             0.8310272499930922e0, 0.008441787366346746e0, 0.7416283853922676e0, -0.33711422046237366e0,
+             0.8867308905978669e0, -0.013964733208345414e0, -0.9169834356683927e0, -0.6446160201656775e0,
+             -0.4314128159761131e0, -0.07046165367728925e0, 0.1292761369854262e0, 0.7491641153779708e0,
+             0.2455752112969821e0, 0.36332977914202347e0, -0.6094132213389469e0, 0.32729417590634935e0,
+             -0.5309149553373499e0, -0.6415609049334897e0, 0.04143095385286538e0, 0.6502635955388084e0,
+             0.0901308705469112e0, 0.5043457200542485e0, 0.09899258562919144e0, 0.5187021857147951e0,
+             0.25440338506733157e0, 0.1650644818795948e0, -0.4873356330199755e0, -0.2184939875223114e0,
+             0.4133272998756739e0, 0.4059714749698231e0, 0.22717650761798017e0, 0.6145249525674683e0,
+             0.10831417283199905e0, 0.394994014273385e0, 0.7655289572064066e0, 0.7778936372387174e0,
+             -0.2005664926106228e0, -0.053457146721091475e0, -0.17667793168009938e0, 0.8080448147049839e0;
+  ok (gather for ^10 X ^10 -> ($i, $j) { take $A[$i;$j] } Z≅ @sol1), 'LU-decomp';
+
+  my $x = LU-solve($A, $p, $b);
+  my @sol2 = 0.7109223850796318e0, 0.6945023614807339e0, -0.6428828715661831e0, -1.367206776903287e0,
+             0.4990441110612922e0, 1.648030263368056e0, 1.164745298345992e0, -0.3278943304709725e0,
+             -1.2707664081909453e0, 0.2671149300169611e0;
+  ok ($x[^10] Z≅ @sol2), 'LU-solve result';
+
+  ok LU-refine($m, $A, $p, $b, $x) == GSL_SUCCESS, 'LU-refine returns success';
+  my @sol3 = 0.7109223850796313e0, 0.6945023614807331e0, -0.6428828715661833e0, -1.3672067769032865e0,
+             0.4990441110612925e0, 1.648030263368055e0, 1.164745298345991e0, -0.32789433047097205e0,
+             -1.2707664081909444e0, 0.267114930016962e0;
+  ok ($x[^10] Z≅ @sol3), 'LU-refine result';
+
+  my Math::Libgsl::Matrix $inv = LU-invert($A, $p);
+  my @sol4 = 0.4657186593446201e0, 0.11842664909095556e0, -0.5745520842328259e0, 0.997700202302949e0,
+             -0.30150233298887197e0, -0.6502525913384113e0, -0.025583019469254797e0, -0.7327485270419323e0,
+             -9.08379551210322e-06, 0.8485588014286635e0, -0.9310372141033609e0, 1.1122430561206031e0,
+             0.23585639043945697e0, 0.6501744194139563e0, 1.0669209550911558e0, -1.498604584423743e0,
+             -0.05688460319524452e0, -0.28761444402419967e0, -0.30182618992326277e0, 0.7519195174315875e0,
+             -0.13975747784841086e0, 0.01744185264994647e0, -0.5444190245066698e0, -0.029226126200458367e0,
+             -0.4471418078651977e0, 0.8705850423347158e0, 1.520506066650875e0, -0.6055026555588867e0,
+             0.20731715359178657e0, -0.7683510643940016e0, -0.484714343280497e0, 1.1755080551007429e0,
+             0.642806659841977e0, -1.6860302079181013e0, 0.6781996088727353e0, -0.4109539378113657e0,
+             -1.3805455591370968e0, 1.704716841008282e0, 0.9409654059256847e0, -1.2149762263238228e0,
+             0.34600001661870816e0, -0.6895421300276569e0, 0.014139715544870491e0, -0.37145596916822554e0,
+             -1.538819567095952e0, 2.6527134833906554e0, 0.3478014142864313e0, -0.29587574200213185e0,
+             -0.195436640672239e0, 0.0196669127817628e0, 0.27078108304098536e0, -1.1578991764481668e0,
+             1.107664806488947e0, 1.3533661079208208e0, -0.09135869820058927e0, -0.7765895313980696e0,
+             0.4557563412237237e0, -1.9892748952664914e0, -0.32595157232760663e0, 1.4620773430200138e0,
+             0.48668664311866316e0, 0.21024191520950927e0, -1.0041429818187952e0, 2.302410718410038e0,
+             0.7908229311116447e0, -0.34981371745271655e0, 1.3063769635169724e0, -1.309886770937435e0,
+             -1.379187927769735e0, -0.5928607463246408e0, 0.8328205218033751e0, -0.5159432461318944e0,
+             0.6043838183630114e0, -1.5468488442192012e0, -1.4163123335297516e0, 1.175845404727994e0,
+             0.29945121999932e0, 0.36398619292948203e0, -0.33872276887925384e0, 0.22011732067763384e0,
+             -0.8754841521716753e0, 0.4599457909478069e0, -0.4940608043808001e0, -0.3168080383371626e0,
+             0.41672017513406745e0, -1.2155308366176127e0, -0.9121467311067085e0, 2.2046326806221974e0,
+             1.0518442795965695e0, -0.09879718670995495e0, 0.48673022035417246e0, -1.0302669617632596e0,
+             0.4310057899199748e0, -1.284509643905147e0, 0.11392958762402547e0, 1.2375551229359707e0,
+             -0.4999433355027437e0, 0.21864867946043842e0, 0.41525430495842236e0, 0.1901304717182375e0;
+  ok (gather for ^10 X ^10 -> ($i, $j) { take $inv[$i;$j] } Z≅ @sol4), 'LU-invert';
+
+  is-approx LU-det($A, $signum), 0.017475253193805475, 'LU-det';
+  is-approx LU-lndet($A), -4.0469695020513194, 'LU-lndet';
+  ok LU-sgndet($A, $signum) == 1, 'LU-sgndet';
+}
+
+subtest 'QR decomposition' => {
+  my Math::Libgsl::Matrix $qr    .= new(3, 5);
+  create-general-matrix($qr);
+
+  my $*TOLERANCE = 1e-12;
+  my $tau = QR-decomp($qr);
+  my @sol1 = -1.1666666666666667e0, -0.6428571428571428e0, -0.4499999999999999e0, -0.3476190476190476e0,
+             -0.28367346938775506e0, 0.23076923076923073e0, -0.10171433030139929e0, -0.10533703247651757e0,
+             -0.09697695053393682e0, -0.08758181082703652e0, 0.1538461538461538e0, 0.43298825542133207e0,
+             0.0039013715732043597e0, 0.005852057359806512e0, 0.006688065554064614e0;
+  ok (gather for ^3 X ^5 -> ($i, $j) { take $qr[$i;$j] } Z≅ @sol1), 'QR-decomp: Householder vectors';
+  ok ($tau[^3] Z≅ (1.8571428571428572e0, 1.6842405528389173e0, 0e0)), 'QR-decomp: Householder coefficients';
+  my ($q, $r) = QR-unpack($qr, $tau);
+  my @sol2 = -0.8571428571428572e0, 0.5016049165548453e0, 0.11704114719613047e0, -0.4285714285714285e0,
+             -0.5684855720954914e0, -0.7022468831767833e0, -0.28571428571428564e0, -0.6520863915212988e0,
+             0.7022468831767835e0;
+  ok (gather for ^3 X ^3 -> ($i, $j) { take $q[$i;$j] } Z≅ @sol2), 'Q matrix';
+  my @sol3 = -1.1666666666666667e0, -0.6428571428571428e0, -0.4499999999999999e0, -0.3476190476190476e0,
+             -0.28367346938775506e0, 0e0, -0.10171433030139929e0, -0.10533703247651757e0, -0.09697695053393682e0,
+             -0.08758181082703652e0, 0e0, 0e0, 0.0039013715732043597e0, 0.005852057359806512e0, 0.006688065554064614e0;
+  ok (gather for ^3 X ^5 -> ($i, $j) { take $r[$i;$j] } Z≅ @sol3), 'R matrix';
+
+
+  my Math::Libgsl::Matrix $hqr   .= new(2, 2);
+  my Math::Libgsl::Vector $rhs   .= new(2);
+  my Math::Libgsl::Vector $hsol  .= new(2);
+  $rhs[$_] = $_ + 1e0 for ^2;
+  $hsol[0] = -8e0; $hsol[1] = 18e0;
+
+  my $hd = QR-decomp($hqr);
+  my $hx = QR-solve($hqr, $hd, $rhs);
+  ok ($hx[^2] Z≅ $hsol[^2]), 'QR-solve result';
+
+  my Math::Libgsl::Matrix $m53   .= new(5, 3);
+  my Math::Libgsl::Vector $lsrhs .= new(5);
+  my Math::Libgsl::Vector $lsr   .= new(5);
+  my Math::Libgsl::Vector $lssol .= new(3);
+  $lsrhs[$_] = $_ + 1e0 for ^5;
+  $lssol[0] = 52.5992295702070e0;
+  $lssol[1] = -337.7263113752073e0;
+  $lssol[2] = 351.8823436427604e0;
+
+  my $lsd = QR-decomp($m53);
+  my ($lsx, $lsres) = QR-lssolve($m53, $lsd, $lsrhs);
+  ok ($lsx[^3] Z≅ $lssol[^3]), 'QR-lssolve';
+
+  my Math::Libgsl::Matrix $A     .= new(10, 10);
+  my Math::Libgsl::Matrix $B     .= new(10, 5);
+  my Math::Libgsl::Random $rnd   .= new;
+  create-random-matrix($A, $rnd);
+  create-random-matrix($B, $rnd);
+  my @sol4[10; 5] =
+    [-1.208620986625094, -1.0546472240861027, -0.7791902451463131, -1.168773675878457, -1.8023918740364615,],
+    [-0.7255813094089609, -0.6599481245008292, -0.6132935912751079, -0.6001656202344267, -0.9656995184226206,],
+    [-0.2706435681806497, -0.37683693893675707, 0.1454012389605544, -0.2524856382131687, -0.1832861493887159,],
+    [-0.25346494022471294, -0.034976909820802315, -0.40523345579661035, -0.3042534812505212, -0.7456694840765314,],
+    [0.3232602101781864, 0.2187167384986574, 0.39770492818806313, 0.18484732428275386, 0.6840232171558648,],
+    [-0.12627206077967576, 0.22810152457644187, -0.08358600426058016, 0.3855951837101906, 0.18596814875099849,],
+    [-0.5648471145968404, -0.12230132226051842, -0.6255138866668446, -0.6991112162503683, -0.22180105879372478,],
+    [-0.2514851779890921, 0.26868394934112794, 0.11129620314236724, 0.7323300527937038, -0.2037361807555147,],
+    [0.5294793846838799, 0.12853319270334268, 0.255770526547394, 0.34313072822437585, -0.25510668175740325,],
+    [-0.30702000923201295, 0.4330172700274453, 0.4160212523423857, -0.1256545168104251, 0.025424204736825898,];
+
+  my $QTtau = QR-decomp($A);
+  QR-QTmat($A, $QTtau, $B);
+  ok (gather for ^10 X ^5 -> ($i, $j) { take $B[$i;$j] } Z≅ (gather for ^10 X ^5 -> ($i, $j) { take @sol4[$i;$j] })), 'QR-QTmat';
+
+  my Math::Libgsl::Matrix $qr2  .= new(2, 2);
+  my Math::Libgsl::Vector $rhs2 .= new(2);
+  my Math::Libgsl::Vector $sol2 .= new(2);
+  create-hilbert-matrix($qr2);
+  $rhs2[$_] = $_ + 1e0 for ^2;
+  $sol2[0] = -8e0;
+  $sol2[1] = 18e0;
+
+  my $d2 = QR-decomp($qr2);
+  my ($q2, $r2) = QR-unpack($qr2, $d2);
+  my $x2 = QR-QRsolve($q2, $r2, $rhs2);
+  ok ($x2[^2] Z≅ $sol2[^2]), 'QR-QRsolve';
+
+  my Math::Libgsl::Matrix $qr3  .= new(3, 5);
+  my Math::Libgsl::Vector $u3   .= new(3);
+  my Math::Libgsl::Vector $v3   .= new(5);
+  my Math::Libgsl::Vector $w3   .= new(3);
+  my @sol5[3; 3] = [-0.8935042044928663, -0.12898229875765133, 0.43013230890129905],
+                   [-0.2905430424289795, 0.8964013473979384, -0.3347377553836333],
+                   [-0.3423959360881532, -0.42406154151296593, -0.8384132823136599];
+  my @sol6[3; 5] =
+    [-0.8601782732745459, 1.230031865411747, -0.4425078373682453, -0.06936085656765273, -1.4575361112775387],
+    [0, -1.001388117214783, 0.09845588959891419, -0.08720390115362166, 0.7809101406822793],
+    [0, 0, -0.10819274227603684, -0.0837858933928506, -0.15697099998011835];
+  create-general-matrix($qr3);
+  $u3[$_] = sin($_ + 1e0) for ^3;
+  $v3[$_] = cos($_ + 2e0) + sin($_ * $_ + 3e0) for ^5;
+
+  my $d3 = QR-decomp($qr3);
+  my ($q3, $r3) = QR-unpack($qr3, $d3);
+
+  for ^3 -> $j {
+    my $sum = 0e0;
+    for ^3 -> $i {
+      $sum += $q3[$i; $j] * $u3[$i];
+    }
+    $w3[$j] = $sum;
+  }
+
+  QR-update($q3, $r3, $w3, $v3);
+
+  ok (gather for ^3 X ^3 -> ($i, $j) { take $q3[$i;$j] } Z≅ (gather for ^3 X ^3 -> ($i, $j) { take @sol5[$i;$j] }))
+    &&
+     (gather for ^3 X ^5 -> ($i, $j) { take $r3[$i;$j] } Z≅ (gather for ^3 X ^5 -> ($i, $j) { take @sol6[$i;$j] })),
+    'QR-update';
+}
+
+subtest 'QR decomposition with column pivoting' => {
+  my Math::Libgsl::Matrix $QR .= new: 5, 3;
+  my Math::Libgsl::Vector $tau;
+  my Math::Libgsl::Permutation $p;
+  my Int $signum;
+  my $*TOLERANCE = 1e-12;
+  create-general-matrix($QR);
+  my @sol1 = [-1.209797962930634, -0.4920144631391021, -0.688820248394743],
+             [0.22626502892459002, -0.1404237167152902, -0.12984510634014051],
+             [0.15084335261639334, 0.3706947936265647, 0.007470117121635775],
+             [0.11313251446229501, 0.3598502556967054, 0.4980706174506804],
+             [0.09050601156983601, 0.33463972482981114, 0.673319606696587];
+
+  ($tau, $p, $signum) = QRPT-decomp($QR);
+
+  ok (gather for ^5 X ^3 -> ($i, $j) { take $QR[$i; $j] } Z≅ @sol1)
+    &&
+     ($tau[^3] Z≅ 1.8265842980736915, 1.450441410025935, 1.1754792908326592)
+    &&
+     ($p.all Z= 0, 2, 1)
+    &&
+     $signum == -1,
+    'QRPT-decomp';
+
+  my Math::Libgsl::Matrix $hilb2 .= new: 2, 2;
+  create-hilbert-matrix($hilb2);
+  my Math::Libgsl::Matrix $QR1 .= new: 2, 2;
+  my Math::Libgsl::Matrix $Q;
+  my Math::Libgsl::Matrix $R;
+  $QR1.copy($hilb2);
+  my @solQ = [-0.8944271909999157, -0.44721359549995793],
+             [-0.44721359549995793, 0.8944271909999159];
+  my @solR = [-1.118033988749895, -0.5962847939999438],
+             [0, 0.07453559924999298];
+  ($Q, $R, $p, $signum) = QRPT-decomp2($QR1);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $Q[$i; $j] } Z≅ @solQ)
+    &&
+     (gather for ^2 X ^2 -> ($i, $j) { take $R[$i; $j] } Z≅ @solR)
+    &&
+     ($p.all Z= 0, 1)
+    &&
+     $signum == 1,
+    'QRPT-decomp2';
+
+  my Math::Libgsl::Matrix $QR2 .= new: 2, 2;
+  my Math::Libgsl::Vector $rhs .= new: 2;
+  my @sol2 = -8, 18;
+  $QR2.copy($hilb2);
+  $rhs[$_] = $_ + 1e0 for ^2;
+
+  ($tau, $p, $signum) = QRPT-decomp($QR2);
+  my Math::Libgsl::Vector $x = QRPT-solve($QR2, $tau, $p, $rhs);
+  ok ($x[^2] Z≅ @sol2), 'QRPT-solve';
+
+  my Math::Libgsl::Matrix $QR3 .= new: 2, 2;
+  my Math::Libgsl::Vector $u   .= new: 2;
+  my Math::Libgsl::Vector $v   .= new: 2;
+  my Math::Libgsl::Vector $w   .= new: 2;
+  $QR3.copy($hilb2);
+  $u[$_] = sin($_ + 1e0) for ^2;
+  $v[$_] = cos($_ + 2e0) + sin($_ * $_ + 3e0) for ^2;
+  my @solQ3 = [-0.9509858213330031, -0.3092344864719868],
+              [-0.30923448647198676, 0.9509858213330031];
+  my @solR3 = [-0.8081854498176496, 1.310435911733038],
+              [0, -0.8935894339524059];
+
+  ($tau, $p, $signum) = QRPT-decomp($QR3);
+  ($Q, $R) = QR-unpack($QR3, $tau);
+
+  for ^2 -> $j {
+    my $sum = 0;
+    for ^2 -> $i {
+      $sum += $Q[$i; $j] * $u[$i];
+    }
+    $w[$j] = $sum;
+  }
+
+  QRPT-update($Q, $R, $p, $w, $v);
+
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $Q[$i; $j] } Z≅ @solQ3)
+    &&
+     (gather for ^2 X ^2 -> ($i, $j) { take $R[$i; $j] } Z≅ @solR3),
+     'QRPT-update';
+
+  my Math::Libgsl::Matrix $QR4 .= new: 2, 2;
+  my Math::Libgsl::Vector $res;
+  $QR4.copy($hilb2);
+
+  ($tau, $p, $signum) = QRPT-decomp($QR4);
+  ($x, $res) = QRPT-lssolve($QR4, $tau, $p, $rhs);
+
+  ok ($x[^2] Z≅ @sol2), 'QRPT-lssolve';
+  ok ($res[^2] Z≅ (0, 0)), 'QRPT-lssolve residuals';
+
+  my Math::Libgsl::Matrix $QR5 .= new: 2, 2;
+  $QR5.copy($hilb2);
+
+  ($tau, $p, $signum) = QRPT-decomp($QR5);
+  my $rank = QRPT-rank($QR5, -1);
+  ($x, $res) = QRPT-lssolve2($QR5, $tau, $p, $rhs, $rank);
+
+  ok ($x[^2] Z≅ @sol2 && $res[^2] Z≅ (0, 0)), 'QRPT-lssolve2 and residuals';
+}
+
+subtest 'LQ decomposition' => {
+  my Math::Libgsl::Matrix $hilb2 .= new: 2, 2;
+  my Math::Libgsl::Matrix $lq    .= new: 2, 2;
+  my Math::Libgsl::Vector $rhs   .= new: 2;
+  my $*TOLERANCE = 1e-12;
+  create-hilbert-matrix($hilb2);
+  $lq.copy-transpose($hilb2);
+  $rhs[$_] = $_ + 1e0 for ^2;
+  my @sol1 = -8, 18;
+
+  my Math::Libgsl::Vector $d = LQ-decomp($lq);
+  my Math::Libgsl::Vector $x = LQ-solve-T($lq, $d, $rhs);
+  ok ($x[^2] Z≅ @sol1), 'LQ-decomp and LQ-solve-T';
+
+  my ($q, $l) = LQ-unpack($lq, $d);
+  $x = LQ-LQsolve($q, $l, $rhs);
+  ok ($x[^2] Z≅ @sol1), 'LQ-unpack and LQ-LQsolve';
+
+  my Math::Libgsl::Vector $residual;
+  ($x, $residual) = LQ-lssolve-T($lq, $d, $rhs);
+  ok ($x[^2] Z≅ @sol1 && $residual[^2] Z≅ (0, 0)), 'LQ-lssolve-T and residuals';
+}
+
+subtest 'Complete Orthogonal Decomposition' => {
+  my Math::Libgsl::Matrix $hilb2 .= new: 2, 2;
+  my Math::Libgsl::Matrix $QRTZ  .= new: 2, 2;
+  my Math::Libgsl::Matrix $Q;
+  my Math::Libgsl::Matrix $R;
+  my Math::Libgsl::Matrix $Z;
+  my Math::Libgsl::Vector $tau-Q;
+  my Math::Libgsl::Vector $tau-Z;
+  my Math::Libgsl::Permutation $p;
+  my Int $rank;
+  my @solQRTZ1 = 1.118033988749895, -0.5962847939999438, 0.2360679774997897, 0.07453559924999298;
+  my @soltauQ1 = 1.8944271909999157, 0;
+  my @soltauZ1 = 0, 0;
+  my @solQ1 = -0.8944271909999157, -0.44721359549995793, -0.44721359549995793, 0.8944271909999159;
+  my @solR1 =-1.118033988749895, -0.5962847939999438, 0, 0.07453559924999298;
+  my @solZ1 = 1, 0, 0, 1;
+  create-hilbert-matrix($hilb2);
+  my $*TOLERANCE = 1e-12;
+  $QRTZ.copy($hilb2);
+
+  ($tau-Q, $tau-Z, $p, $rank) = COD-decomp($QRTZ);
+
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $QRTZ[$i; $j] } Z≅ @solQRTZ1)
+    &&
+     ($tau-Q[^2] Z≅ @soltauQ1)
+    &&
+     ($tau-Z[^2] Z≅ @soltauZ1)
+    &&
+      $rank == 2
+    &&
+      $p.all cmp (0, 1) eq 'Same',
+    'COD-decomp';
+
+  ($Q, $R, $Z) = COD-unpack($QRTZ, $tau-Q, $tau-Z, $rank);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $Q[$i; $j] } Z≅ @solQ1)
+    &&
+     (gather for ^2 X ^2 -> ($i, $j) { take $R[$i; $j] } Z≅ @solR1)
+    &&
+     (gather for ^2 X ^2 -> ($i, $j) { take $Z[$i; $j] } Z≅ @solZ1),
+    'COD-unpack';
+
+  my Math::Libgsl::Vector $x;
+  my Math::Libgsl::Vector $residual;
+  my Math::Libgsl::Vector $rhs .= new: 2;
+  $rhs[$_] = $_ + 1e0 for ^2;
+
+  ($x, $residual) = COD-lssolve($QRTZ, $tau-Q, $tau-Z, $p, $rank, $rhs);
+  ok ($x[^2] Z≅ (-8, 18)) && ($residual[^2] Z≅ (0, 0)), 'COD-lssolve';
+
+  my $lambda = 2.3;
+  my Math::Libgsl::Matrix $A .= new: 100, 50;
+  my Math::Libgsl::Random $r .= new;
+  my Math::Libgsl::Vector $b .= new: 100;
+  my @solx = -0.018462484585622357, 0.019575217751009073, 0.012640715473137413, -0.009169327686171697,
+             -0.04536822106424766, 0.009123826669473341, -0.03799928794535317, 0.015231393529434173,
+             -0.01562889258004679, -0.024739261667587557, -0.06108008108730741, -0.0029725782995958976,
+             0.060291626542463984, -0.015578970867439236, 0.004320649763656334, -0.020416253782541305,
+             -0.0031278793126650276, -0.06830124428136776, 0.0163151584806687, 0.05763413486690726,
+             -0.03384175023225632, 0.0018458339310162344, 0.025280372595978887, 0.005602319166374679,
+             0.10043963459510222, -0.03440777682701437, 0.06774975682369475, -0.005309708955107483,
+             0.03477788960324378, -0.07427459094918588, -0.06477401548762148, -0.01715995695683791,
+             -0.004913064749138054, 0.03784210527884247, 0.08678188070856876, -0.02190503466193547,
+             0.053437937675444615, 0.030197104313360035, -0.0286552083076863, -0.05283492707176814,
+             0.004981517482189463, 4.3112944918568944e-05, -0.009873396836500778, 0.04731192772452806,
+             -0.007836638697682287, 0.0647771161650437, 0.023505975834774293, -0.027951346769336152,
+             -0.020191048806093632, 0.0022644836663259713;
+  my @solresidual = 0.07506552159992758, 0.3922469402268133, 0.13086496681398624, 0.171898235069902,
+                    -0.465798865421583, -0.17738667573460443, 0.15558335374947, 0.07061611260292482,
+                    -0.5060183552388352, -0.01709627035339239, 0.4127097735142271, 0.01468540698559401,
+                    0.44060683205134393, 0.09758914841057965, -0.017985089969275073, 0.008399085064383666,
+                    0.32241851030994995, 0.1256247366811053, 0.20227398986318143, 0.06165505285480713,
+                    0.21831805784761152, -0.3154175853219755, -0.16321218499827234, -0.23245018586385802,
+                    -0.23051098965385736, 0.34170338835721303, -0.03895174689122388, 0.43838425243233653,
+                    -0.3965413684295542, 0.4123100221992462, 0.19865765410632205, 0.18345326705786552,
+                    0.015448021520477171, 0.36257625430031765, -0.21713059669180795, 0.15031232718835835,
+                    0.03781535235402038, -0.09934274141276186, -0.2622349867138063, 0.2537203014028584,
+                    0.04612463056286892, -0.2799831927260623, 0.2523326073581078, 0.040078595169375245,
+                    0.12537098382301437, 0.17660092906662037, 0.3674853031930402, 0.44687716271403377,
+                    0.4641826891415557, -0.18294237412464584, -0.29701217728972185, 0.004545795944321354,
+                    0.3107658018198267, -0.2504035820875857, -0.1892171518699156, -0.03903156019712084,
+                    0.20474014761326123, -0.2490466922273761, -0.3819957010931251, 0.009866397059930743,
+                    -0.2088024854211764, 0.29112099787475865, -0.46402669659424384, 0.37765553697981935,
+                    0.41390859356011206, 0.036794514723160525, -0.18170789092485448, 0.23258826170761607,
+                    -0.4118142497169783, 0.560014727781023, -0.06130241434366662, 0.03190945546976214,
+                    0.41490019303245296, -0.174761217843828, 0.04458974469682233, -0.2918453899491667,
+                    0.27334617031757047, -0.4076242326650097, 0.2986536971664846, 0.12720468080804648,
+                    0.3144962251158973, -0.2838600134919259, 0.015543879118609596, 0.030197381638951814,
+                    -0.0999168041215961, -0.5444261330153957, 0.07097265642802611, -0.0210716214550671,
+                    0.04054050575915193, -0.22010586048390524, -0.12700298259776704, -0.1342561981471622,
+                    -0.23204045784812952, -0.32304635818876315, -0.3124666552755392, -0.13770312596167988,
+                    -0.504456892309686, -0.0787879072472506, -0.04135346784253771, -0.22888456254352116;
+  create-rank-matrix(26, $A, $r);
+  create-random-vector($b, $r);
+
+  ($tau-Q, $tau-Z, $p, $rank) = COD-decomp($A);
+  ($x, $residual) = COD-lssolve2($A, $tau-Q, $tau-Z, $p, $rank, $b, $lambda);
+  ok ($x[^50] Z≅ @solx) && ($residual[^100] Z≅ @solresidual), 'COD-lssolve2';
+}
+
+subtest 'Singular Value Decomposition' => {
+  my Math::Libgsl::Matrix $hilb2 .= new: 2, 2;
+  my Math::Libgsl::Matrix $A     .= new: 2, 2;
+  my Math::Libgsl::Matrix $V;
+  my Math::Libgsl::Vector $S;
+  my Math::Libgsl::Vector $x;
+  my @solV1 = -0.8816745987679439, -0.4718579255320244, -0.4718579255320244, 0.8816745987679439;
+  my @solS1 = 1.2675918792439984, 0.06574145408933513;
+  my $*TOLERANCE = 1e-12;
+  create-hilbert-matrix($hilb2);
+  $A.copy($hilb2);
+
+  ($V, $S) = SV-decomp($A);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $V[$i; $j] } Z≅ @solV1) && ($S[^2] Z≅ @solS1), 'SV-decomp';
+
+  ($V, $S) = SV-decomp-jacobi($A);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $V[$i; $j] } Z≅ @solV1) && ($S[^2] Z≅ @solS1), 'SV-decomp-jacobi';
+
+  ($V, $S) = SV-decomp-mod($A);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $V[$i; $j] } Z≅ @solV1) && ($S[^2] Z≅ @solS1), 'SV-decomp-mod';
+
+  my Math::Libgsl::Vector $b .= new: 2;
+  $b[$_] = $_ + 1 for ^2;
+  $x = SV-solve($A, $V, $S, $b);
+  ok ($x[^2] Z≅ (-8, 18)), 'SV-solve';
+}
+
+subtest 'Cholesky Decomposition' => {
+  my Math::Libgsl::Matrix $hilb2 .= new: 2, 2;
+  my Math::Libgsl::Matrix $V     .= new: 2, 2;
+  my Math::Libgsl::Vector $rhs   .= new: 2;
+  my @sol1 = 1, 0.5, 0.5, 0.28867513459481287;
+  my @sol2 = 4, -6, -6, 12;
+  my $*TOLERANCE = 1e-12;
+  create-hilbert-matrix($hilb2);
+  $V.copy($hilb2);
+
+  cholesky-decomp1($V);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $V[$i; $j] } Z≅ @sol1), 'cholesky-decomp1';
+  is-approx cholesky-rcond($V), 0.03703703703703703, 'cholesky-rcond';
+  cholesky-invert($V);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $V[$i; $j] } Z≅ @sol2), 'cholesky-invert';
+
+  $V.copy($hilb2);
+  $rhs[$_] = $_ + 1 for ^2;
+  cholesky-decomp1($V);
+  my $x = cholesky-solve($V, $rhs);
+  ok ($x[^2] Z≅ (-8, 18)), 'cholesky-solve';
+
+  $V.copy($hilb2);
+  my $s = cholesky-decomp2($V);
+  ok ($s[^2] Z≅ (1, 1.7320508075688774)), 'cholesky-decomp2';
+  $x = cholesky-solve2($V, $s, $rhs);
+  ok ($x[^2] Z≅ (-8, 18)), 'cholesky-solve2';
+
+  $V.copy($hilb2);
+  my $d = cholesky-decomp-unit($V);
+  ok ($d[^2] Z≅ (1, 0.08333333333333333)), 'cholesky-decomp-unit';
+
+  my Math::Libgsl::Matrix $m .= new: 2, 2;
+  my @sol3 = 0.999741748906672, 0.16290987539105117, 0.16295195791234196, 0.25607132213460243;
+  create-symm-matrix($m);
+  my ($p, $E) = mcholesky-decomp($m);
+  ok ((gather for ^2 X ^2 -> ($i, $j) { take $m[$i; $j] } Z≅ @sol3)
+      &&
+     ($E[^2] Z≅ (0, 0))
+      &&
+     ($p.all cmp (0, 1) eq 'Same')), 'mcholesky-decomp';
+
+  create-symm-matrix($m);
+  ($p, $) = mcholesky-decomp($m, :!perturbation);
+  ok ((gather for ^2 X ^2 -> ($i, $j) { take $m[$i; $j] } Z≅ @sol3)
+      &&
+     ($p.all cmp (0,1) eq 'Same')), 'mcholesky-decomp, no perturbation';
+
+  $rhs[0] = 1.0811966866021976; $rhs[1] = 0.5541741662503531;
+  my @sol4 = 0.9997417489066718, 0.16290987539105165;
+  $V.copy($hilb2);
+  ($p, $) = mcholesky-decomp($V, :!perturbation);
+  $x = mcholesky-solve($V, $p, $rhs);
+  ok ($x[^2] Z≅ @sol4), 'mcholesky-solve';
+
+  my @sol5 = 4, -6.000000000000001, -6.000000000000001, 12.000000000000002;
+  my $Ainv = mcholesky-invert($V, $p);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $Ainv[$i; $j] } Z≅ @sol5), 'mcholesky-invert';
+
+  my @sol6 = 1, 0.5, 0.5, 0.08333333333333331;
+  $V.copy($hilb2);
+  $p = pcholesky-decomp($V);
+  ok ((gather for ^2 X ^2 -> ($i, $j) { take $V[$i; $j] } Z≅ @sol6) && $p.all cmp (0,1) eq 'Same'), 'pcholesky-decomp';
+  ok pcholesky-rcond($V, $p) ≅ 0.03703703703703703, 'pcholesky-rcond';
+
+  $V.copy($hilb2);
+  $rhs[0] = 1.0811966866021976; $rhs[1] = 0.5541741662503531;
+  $x = pcholesky-solve($V, $p, $rhs);
+  ok ($x[^2 ≅ (0.999741748906672, 0.16290987539105117)]), 'pcholesky-solve';
+  $Ainv = pcholesky-invert($V, $p);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $Ainv[$i; $j] } Z≅ @sol5), 'pcholesky-invert';
+}
+
+subtest 'LDLT Decomposition' => {
+  if $gsl-version < 2.6 {
+    my Math::Libgsl::Matrix $hilb2 .= new: 2, 2;
+    create-hilbert-matrix($hilb2);
+    throws-like { ldlt-decomp($hilb2) },
+                X::Libgsl,
+                message => /'version < v2.6'/,
+                'LDLT functions will be available with v2.6+';
+  } else {
+    skip 'version ≥ 2.6';
+  }
+}
+
+subtest 'Bidiagonalization' => {
+  my Math::Libgsl::Matrix $hilb2 .= new: 2, 2;
+  my Math::Libgsl::Matrix $A     .= new: 2, 2;
+  my Math::Libgsl::Vector ($tau_U, $tau_V);
+  my @sol1 = -1.118033988749895, -0.5962847939999438, 0.2360679774997897, 0.07453559924999298;
+  create-hilbert-matrix($hilb2);
+  $A.copy($hilb2);
+
+  ($tau_U, $tau_V) = bidiag-decomp($A);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $A[$i; $j] } Z≅ @sol1)
+      &&
+     ($tau_U[^2] Z≅ (1.8944271909999157, 0))
+      &&
+     $tau_V[0] == 0, 'bidiag-decomp';
+
+  my Math::Libgsl::Vector ($diag, $sdiag);
+  my Math::Libgsl::Matrix ($U, $V);
+  my @sol2 = -0.8944271909999157, -0.44721359549995793, -0.44721359549995793, 0.8944271909999159;
+
+  ($U, $V, $diag, $sdiag) = bidiag-unpack($A, $tau_U, $tau_V);
+  ok (gather for ^2 X ^2 -> ($i, $j) { take $U[$i; $j] } Z≅ @sol2)
+      &&
+     (gather for ^2 X ^2 -> ($i, $j) { take $V[$i; $j] } Z≅ (1, 0, 0, 1))
+      &&
+     ($diag[^2] Z≅ (-1.118033988749895, 0.07453559924999298))
+      &&
+     $sdiag[0] == -0.5962847939999438, 'bidiag-decomp';
+}
+
+subtest 'Householder Transformations' => {
+  my Math::Libgsl::Matrix $A .= new: 2, 2;
+  my Math::Libgsl::Vector $x .= new: 2;
+  my @sol = -8, 18;
+  create-hilbert-matrix($A);
+  $x[$_] = $_ + 1 for ^2;
+
+  HH-svx($A, $x);
+  ok ($x[^2] Z≅ @sol), 'HH-svx';
+}
+
+subtest 'Tridiagonal Systems' => {
+  my Math::Libgsl::Vector $diag1    .= new: 2;
+  my Math::Libgsl::Vector $offdiag1 .= new: 1;
+  my Math::Libgsl::Vector $rhs1     .= new: 2;
+  my Math::Libgsl::Vector $x;
+  my @sol1 = 0, 2;
+  for ^2 -> $i {
+    $diag1[$i] = 1;
+    $rhs1[$i]  = 1 + $i;
+  }
+  $offdiag1[0] = .5;
+
+  $x = tridiag-symm-solve($diag1, $offdiag1, $rhs1);
+  ok ($x[^2] Z≅ @sol1), 'tridiag-symm-solve';
+
+  my Math::Libgsl::Vector $diag2    .= new: 3;
+  my Math::Libgsl::Vector $offdiag2 .= new: 3;
+  my Math::Libgsl::Vector $rhs2     .= new: 3;
+  my @sol2 = -2, 5, -2;
+  $diag2[$_] = 1 for ^3;
+  $offdiag2[$_] = 3 for ^3;
+  $rhs2[0] = 7; $rhs2[1] = -7; $rhs2[2] = 7;
+
+  $x = tridiag-symm-cyc-solve($diag2, $offdiag2, $rhs2);
+  ok ($x[^3] Z≅ @sol2), 'tridiag-symm-cyc-solve';
+
+  my Math::Libgsl::Vector $diag3      .= new: 3;
+  my Math::Libgsl::Vector $abovediag3 .= new: 2;
+  my Math::Libgsl::Vector $belowdiag3 .= new: 2;
+  my Math::Libgsl::Vector $rhs3       .= new: 3;
+  my @sol3 = .75, .75, 2.625;
+  for ^3 -> $i {
+    $diag3[$i] = 1;
+    $rhs3[$i]  = 1 + $i;
+  }
+  for ^2 -> $i {
+    $abovediag3[$i] = 1/3;
+    $belowdiag3[$i] = 1/2;
+  }
+
+  $x = tridiag-solve($diag3, $abovediag3, $belowdiag3, $rhs3);
+  ok ($x[^3] Z≅ @sol3), 'tridiag-solve';
+
+  my Math::Libgsl::Vector $diag4      .= new: 3;
+  my Math::Libgsl::Vector $abovediag4 .= new: 3;
+  my Math::Libgsl::Vector $belowdiag4 .= new: 3;
+  my Math::Libgsl::Vector $rhs4       .= new: 3;
+  my @sol4 = .75, .75, 2.625;
+  for ^3 -> $i {
+    $diag4[$i] = 1;
+    $rhs4[$i]  = 1 + $i;
+    $abovediag4[$i] = 2;
+    $belowdiag4[$i] = 1;
+  }
+
+  $x = tridiag-cyc-solve($diag4, $abovediag4, $belowdiag4, $rhs4);
+  ok ($x[^3] Z≅ @sol4), 'tridiag-cyc-solve';
+}
+
+subtest 'Triangular Systems' => {
+  my Math::Libgsl::Matrix $A .= new: 3, 3;
+  my Math::Libgsl::Random $r .= new;
+  my @sol = 1.0002583178041833, 0, 0,
+           -0.5431731930411399, 3.3333333333333335, 0,
+           -1.694146057887794, -1.5922278099127871, 2.061967848224576;
+  for ^3 -> $i {
+    for 0..$i -> $j {
+      my $mij = $r.get-uniform;
+      $mij = max($mij, .3) if $i == $j;
+      $A[$i; $j] = $mij;
+    }
+  }
+
+  if $gsl-version < 2.6 {
+    tri-lower-invert($A);
+  }else{
+    tri-invert(CblasLower, CblasNonUnit, $A);
+  }
+  ok (gather for ^3 X ^3 -> ($i, $j) { take $A[$i; $j] } Z≅ @sol), 'tri-lower-invert';
+}
+
+if $gsl-version > 2.5 {
+  subtest 'Banded Cholesky decomposition' => {
+    my $M = 3;
+    my $*TOLERANCE = 1e-12;
+    my Math::Libgsl::Matrix $m  .= new: $M, $M;
+    my Math::Libgsl::Matrix $v  .= new: $M, $M;
+    my Math::Libgsl::Matrix $a  .= new: $M, $M;
+    my Math::Libgsl::Matrix $lt .= new: $M, $M;
+
+    create-posdef-band-matrix($m);
+    symm-to-band($m, $v);
+
+    cholesky-band-decomp($v);
+    my $l = cholesky-band-unpack($v);
+
+    $lt.tricpy($l, CblasLower, CblasNonUnit);
+    dgemm(CblasNoTrans, CblasNoTrans, 1, $l, $lt, 0, $a);
+
+    ok (gather for ^$M X ^$M -> ($i, $j) { take $m[$i;$j] } Z≅
+        gather for ^$M X ^$M -> ($i, $j) { take $a[$i;$j] }), 'cholesky-band-decomp and cholesky-band-unpack';
+
+    $a.copy($m);
+    cholesky-decomp1($a);
+    my $rcond-expected = cholesky-rcond($a);
+    my $rcond = cholesky-band-rcond($v);
+
+    ok $rcond-expected ≅ $rcond, 'cholesky-band-rcond';
+
+    my Math::Libgsl::Random $r   .= new;
+    my Math::Libgsl::Vector $rhs .= new: $M;
+    my Math::Libgsl::Vector $sol .= new: $M;
+    my Math::Libgsl::Matrix $c   .= new: $M, $M;
+
+    create-random-vector($rhs, $r);
+    dsymv(CblasLower, 1, $m, $sol, 0, $rhs);
+
+    my $x = cholesky-band-solve($v, $rhs);
+
+    ok ($sol[$_] ≅ $x[$_] for ^$M), 'cholesky-band-solve';
+
+    my $minv = cholesky-band-invert($v);
+
+    dsymm(CblasLeft, CblasUpper, 1, $m, $minv, 0, $c);
+
+    my $ret = True;
+    for ^$M X ^$M -> ($i, $j) {
+      $ret &&= $c[$i; $j] ≅ ($i == $j ?? 1e0 !! 0e0);
+    }
+    ok $ret, 'cholesky_band_invert';
+  }
+  subtest 'Banded LDLT decomposition' => {
+    my $M = 3;
+    my Math::Libgsl::Matrix $m  .= new: $M, $M;
+    my Math::Libgsl::Matrix $v  .= new: $M, $M;
+    my Math::Libgsl::Matrix $a  .= new: $M, $M;
+    my Math::Libgsl::Matrix $l  .= new: $M, $M;
+    my Math::Libgsl::Matrix $lt .= new: $M, $M;
+    my Math::Libgsl::Vector::View $d .= new;
+
+    create-posdef-band-matrix($m);
+    $v.copy($m);
+
+    ldlt-band-decomp($v);
+
+    $l.tricpy($v, CblasLower, CblasNonUnit);
+    my $diag = $l.diagonal-view($d);
+    $diag.setall(1);
+    $lt.transpose-tricpy($l, CblasLower, CblasNonUnit);
+    $diag = $v.diagonal-view($d);
+    for ^$M -> $i {
+      my Math::Libgsl::Vector::View $c .= new;
+      my $col = $l.col-view($c, $i);
+      my $di = $diag[$i];
+      $col.scale($di);
+    }
+    dgemm(CblasNoTrans, CblasNoTrans, 1, $l, $lt, 0, $a);
+
+    ok (gather for ^$M X ^$M -> ($i, $j) { take $m[$i;$j] } Z≅
+        gather for ^$M X ^$M -> ($i, $j) { take $a[$i;$j] }), 'ldlt-band-decomp';
+
+    my Math::Libgsl::Random $r   .= new;
+    my Math::Libgsl::Vector $rhs .= new: $M;
+    my Math::Libgsl::Vector $sol .= new: $M;
+
+    create-random-vector($sol, $r);
+    dsymv(CblasLower, 1, $m, $sol, 0, $rhs);
+
+    my $x = ldlt-band-solve($v, $rhs);
+
+    ok ($sol[$_] ≅ $x[$_] for ^$M), 'ldlt-band-solve';
+  }
+}
+
+done-testing;
