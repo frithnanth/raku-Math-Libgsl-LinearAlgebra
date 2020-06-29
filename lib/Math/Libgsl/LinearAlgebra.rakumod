@@ -1273,9 +1273,9 @@ use Math::Libgsl::LinearAlgebra;
 Math::Libgsl::LinearAlgebra is an interface to the linear algebra functions of libgsl, the GNU Scientific Library.
 This package provides both the low-level interface to the C library (Raw) and a more comfortable interface layer for the Raku programmer.
 
-This module provides functions for num64 and Complex data types.
+This module provides functions for Num and Complex data types.
 
-=head2 num64
+=head2 Num
 
 =head3 LU-decomp(Math::Libgsl::Matrix $A where *.matrix.size1 == $A.matrix.size2 --> List)
 
