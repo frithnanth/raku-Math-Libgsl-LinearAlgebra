@@ -1,6 +1,7 @@
 Revision history for Math-Libgsl-LinearAlgebra
 
 {{$NEXT}}
+    - Fix tests for C library v2.6
 
 0.0.1  2020-06-29T18:32:10+02:00
     - Initial version

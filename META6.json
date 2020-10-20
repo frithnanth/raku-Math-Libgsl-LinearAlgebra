@@ -1,20 +1,20 @@
 {
-  "auth" : "cpan:FRITH",
-  "authors" : [
+  "auth": "cpan:FRITH",
+  "authors": [
     "Fernando Santagata"
   ],
-  "build" : {
-    "makefile-variables" : {
-      "gslhelper" : {
-        "resource" : "libraries/gslhelper"
+  "build": {
+    "makefile-variables": {
+      "gslhelper": {
+        "resource": "libraries/gslhelper"
       }
     }
   },
-  "build-depends" : [
+  "build-depends": [
     "Distribution::Builder::MakeFromJSON"
   ],
-  "builder" : "Distribution::Builder::MakeFromJSON",
-  "depends" : [
+  "builder": "Distribution::Builder::MakeFromJSON",
+  "depends": [
     "Distribution::Builder::MakeFromJSON",
     "Math::Libgsl::Constants",
     "Math::Libgsl::Matrix",
@@ -22,26 +22,26 @@
     "Math::Libgsl::BLAS",
     "Math::Libgsl::Random"
   ],
-  "description" : "An interface to libgsl, the Gnu Scientific Library - Linear Algebra.",
-  "license" : "Artistic-2.0",
-  "name" : "Math::Libgsl::LinearAlgebra",
-  "perl" : "6.c",
-  "provides" : {
-    "Math::Libgsl::LinearAlgebra" : "lib/Math/Libgsl/LinearAlgebra.rakumod",
-    "Math::Libgsl::LinearAlgebra::Complex64" : "lib/Math/Libgsl/LinearAlgebra/Complex64.rakumod",
-    "Math::Libgsl::Raw::LinearAlgebra" : "lib/Math/Libgsl/Raw/LinearAlgebra.rakumod"
+  "description": "An interface to libgsl, the Gnu Scientific Library - Linear Algebra.",
+  "license": "Artistic-2.0",
+  "name": "Math::Libgsl::LinearAlgebra",
+  "perl": "6.c",
+  "provides": {
+    "Math::Libgsl::LinearAlgebra": "lib/Math/Libgsl/LinearAlgebra.rakumod",
+    "Math::Libgsl::LinearAlgebra::Complex64": "lib/Math/Libgsl/LinearAlgebra/Complex64.rakumod",
+    "Math::Libgsl::Raw::LinearAlgebra": "lib/Math/Libgsl/Raw/LinearAlgebra.rakumod"
   },
-  "resources" : [
+  "resources": [
     "libraries/gslhelper"
   ],
-  "source-url" : "git://github.com/frithnanth/raku-Math-Libgsl-LinearAlgebra.git",
-  "tags" : [
+  "source-url": "git://github.com/frithnanth/raku-Math-Libgsl-LinearAlgebra.git",
+  "tags": [
     "math",
     "nativecall"
   ],
-  "test-depends" : [
+  "test-depends": [
     "Math::Libgsl::BLAS",
     "Math::Libgsl::Random"
   ],
-  "version" : "0.0.1"
+  "version": "0.0.1"
 }
