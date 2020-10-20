@@ -1,6 +1,6 @@
 use v6;
 
-unit class Math::Libgsl::LinearAlgebra::Complex64:ver<0.0.1>:auth<cpan:FRITH>;
+unit class Math::Libgsl::LinearAlgebra::Complex64:ver<0.0.2>:auth<cpan:FRITH>;
 
 use Math::Libgsl::Raw::LinearAlgebra :ALL;
 use NativeCall;
