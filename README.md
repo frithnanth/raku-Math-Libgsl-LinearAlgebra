@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/frithnanth/raku-Math-Libgsl-LinearAlgebra.svg?branch=master)](https://travis-ci.org/frithnanth/raku-Math-Libgsl-LinearAlgebra)
+[![Actions Status](https://github.com/frithnanth/raku-Math-Libgsl-LinearAlgebra/workflows/test/badge.svg)](https://github.com/frithnanth/raku-Math-Libgsl-LinearAlgebra/actions) [![Build Status](https://travis-ci.org/frithnanth/raku-Math-Libgsl-LinearAlgebra.svg?branch=master)](https://travis-ci.org/frithnanth/raku-Math-Libgsl-LinearAlgebra)
 
 NAME
 ====
