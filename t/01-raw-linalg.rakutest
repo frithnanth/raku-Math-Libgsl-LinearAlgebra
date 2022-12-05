@@ -1,4 +1,4 @@
-#!/usr/bin/env perl6
+#!/usr/bin/env raku
 
 use Test;
 use lib 'lib';
@@ -96,7 +96,7 @@ sub create-symm-matrix(gsl_matrix $m)
       gsl_matrix_set($m, $i, $j, gsl_rng_uniform($r));
     }
   }
-  if $gsl-version > 2.5 {
+  if $gsl-version > v2.5 {
     gsl_matrix_transpose_tricpy(CblasLower, CblasNonUnit, $m, $m);
   } else {
     gsl_matrix_transpose_tricpy('L'.ord, 0, $m, $m);
@@ -1328,7 +1328,7 @@ sub Cholesky-decomp(gsl_matrix $m)
 
   @res.push: gsl_linalg_cholesky_decomp1($V) == GSL_SUCCESS;
 
-  if $gsl-version > 2.5 {
+  if $gsl-version > v2.5 {
     gsl_matrix_tricpy(CblasLower, CblasNonUnit, $L, $V);
     gsl_matrix_transpose_tricpy(CblasLower, CblasNonUnit, $LT, $L);
   } else {
@@ -1630,7 +1630,7 @@ sub mCholesky-decomp
 
   gsl_matrix_set_identity($L);
   gsl_matrix_set_identity($LT);
-  if $gsl-version > 2.5 {
+  if $gsl-version > v2.5 {
     gsl_matrix_tricpy(CblasLower, CblasUnit, $L, $LDLT);
     gsl_matrix_transpose_tricpy(CblasLower, CblasUnit, $LT, $L);
   } else {
@@ -1769,7 +1769,7 @@ sub pCholesky-decomp(gsl_matrix $m)
 
   gsl_matrix_set_identity($L);
   gsl_matrix_set_identity($LT);
-  if $gsl-version > 2.5 {
+  if $gsl-version > v2.5 {
     gsl_matrix_tricpy(CblasLower, CblasUnit, $L, $LDLT);
     gsl_matrix_transpose_tricpy(CblasLower, CblasUnit, $LT, $L);
   } else {
@@ -2416,7 +2416,7 @@ subtest 'tridiagonal systems' => {
 
 ok triang-invert, 'triangular system inversion';
 
-if $gsl-version > 2.5 {
+if $gsl-version > v2.5 {
   subtest 'Banded Cholesky decomposition' => {
     is-deeply cholesky-band-decomp, Array[Bool].new(True xx 2), 'banded Cholesky decomp, unpack, rcond';
     ok cholesky-band-solve,  'banded Cholesky solve';

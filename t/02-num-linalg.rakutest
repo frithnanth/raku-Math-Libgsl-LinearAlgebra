@@ -1,4 +1,4 @@
-#!/usr/bin/env perl6
+#!/usr/bin/env raku
 
 use Test;
 use lib 'lib';
@@ -638,7 +638,7 @@ subtest 'Cholesky Decomposition' => {
 }
 
 subtest 'LDLT Decomposition' => {
-  if $gsl-version < 2.6 {
+  if $gsl-version < v2.6 {
     my Math::Libgsl::Matrix $hilb2 .= new: 2, 2;
     create-hilbert-matrix($hilb2);
     throws-like { ldlt-decomp($hilb2) },
@@ -763,8 +763,7 @@ subtest 'Triangular Systems' => {
       $A[$i; $j] = $mij;
     }
   }
-
-  if $gsl-version < 2.6 {
+  if $gsl-version < v2.6 {
     tri-lower-invert($A);
   }else{
     tri-invert(CblasLower, CblasNonUnit, $A);
@@ -772,7 +771,7 @@ subtest 'Triangular Systems' => {
   ok ([&&] (gather for ^3 X ^3 -> ($i, $j) { take $A[$i; $j] } Z≅ @sol)), 'tri-lower-invert';
 }
 
-if $gsl-version > 2.5 {
+if $gsl-version > v2.5 {
   subtest 'Banded Cholesky decomposition' => {
     my $M = 3;
     my $*TOLERANCE = 1e-10;

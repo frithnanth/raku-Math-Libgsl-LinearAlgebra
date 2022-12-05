@@ -1,6 +1,6 @@
 use v6.c;
 
-unit class Math::Libgsl::LinearAlgebra:ver<0.0.2>:auth<cpan:FRITH>;
+unit class Math::Libgsl::LinearAlgebra:ver<0.0.2>:auth<zef:FRITH>;
 
 use Math::Libgsl::Raw::LinearAlgebra :ALL;
 use NativeCall;
@@ -798,7 +798,7 @@ sub mcholesky-invert(Math::Libgsl::Matrix $LDLT where *.matrix.size1 == $LDLT.ma
 # LDLT Decomposition
 sub ldlt-decomp(Math::Libgsl::Matrix $A where *.matrix.size1 == $A.matrix.size2 --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-decomp: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-decomp: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_ldlt_decomp($A.matrix);
 }
 
@@ -806,7 +806,7 @@ sub ldlt-solve(Math::Libgsl::Matrix $LDLT where *.matrix.size1 == $LDLT.matrix.s
                Math::Libgsl::Vector $b where *.vector.size == $LDLT.matrix.size1
                --> Math::Libgsl::Vector) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-solve: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-solve: version < v2.6" if $gsl-version < v2.6;
   my Math::Libgsl::Vector $x .= new: $LDLT.matrix.size2;
   my $ret = gsl_linalg_ldlt_solve($LDLT.matrix, $b.vector, $x.vector);
   fail X::Libgsl.new: errno => $ret, error => "Error in ldlt-solve" if $ret ≠ GSL_SUCCESS;
@@ -816,13 +816,13 @@ sub ldlt-solve(Math::Libgsl::Matrix $LDLT where *.matrix.size1 == $LDLT.matrix.s
 sub ldlt-svx(Math::Libgsl::Matrix $LDLT where *.matrix.size1 == $LDLT.matrix.size2,
              Math::Libgsl::Vector $x where *.vector.size == $LDLT.matrix.size1 --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-svx: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-svx: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_ldlt_svx($LDLT.matrix, $x.vector);
 }
 
 sub ldlt-rcond(Math::Libgsl::Matrix $LDLT where *.matrix.size1 == $LDLT.matrix.size2 --> Num) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-rcond: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-rcond: version < v2.6" if $gsl-version < v2.6;
   my Math::Libgsl::Vector $work .= new: 3 * $LDLT.matrix.size2;
   my num64 $rcond;
   my $ret = gsl_linalg_ldlt_rcond($LDLT.matrix, $rcond, $work.vector);
@@ -1117,25 +1117,25 @@ sub tri-lower-unit-invert(Math::Libgsl::Matrix $T where *.matrix.size1 == $T.mat
 # v2.6
 sub tri-invert(Int $Uplo, Int $Diag, Math::Libgsl::Matrix $T where *.matrix.size1 == $T.matrix.size2 --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in tri-invert: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in tri-invert: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_tri_invert($Uplo, $Diag, $T.matrix);
 }
 
 sub tri-LTL(Math::Libgsl::Matrix $L where *.matrix.size1 == $L.matrix.size2 --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in tri-LTL: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in tri-LTL: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_tri_LTL($L.matrix);
 }
 
 sub tri-UL(Math::Libgsl::Matrix $LU where *.matrix.size1 == $LU.matrix.size2 --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in tri-UL: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in tri-UL: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_tri_UL($LU.matrix);
 }
 
 sub tri-rcond(Int $Uplo, Math::Libgsl::Matrix $A where *.matrix.size1 == $A.matrix.size2 --> Num) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in tri-rcond: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in tri-rcond: version < v2.6" if $gsl-version < v2.6;
   my Math::Libgsl::Vector $work .= new: 3 * $A.matrix.size2;
   my num64 $rcond;
   my $ret = gsl_linalg_tri_rcond($Uplo, $A.matrix, $rcond, $work.vector);
@@ -1146,7 +1146,7 @@ sub tri-rcond(Int $Uplo, Math::Libgsl::Matrix $A where *.matrix.size1 == $A.matr
 # Banded Cholesky Decomposition v2.6
 sub cholesky-band-decomp(Math::Libgsl::Matrix $A where *.matrix.size1 == $A.matrix.size2 --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-decomp: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-decomp: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_cholesky_band_decomp($A.matrix);
 }
 
@@ -1154,7 +1154,7 @@ sub cholesky-band-solve(Math::Libgsl::Matrix $LLT where *.matrix.size1 == $LLT.m
                         Math::Libgsl::Vector $b where *.vector.size == $LLT.matrix.size1
                         --> Math::Libgsl::Vector) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-solve: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-solve: version < v2.6" if $gsl-version < v2.6;
   my Math::Libgsl::Vector $x .= new: $b.vector.size;
   my $ret = gsl_linalg_cholesky_band_solve($LLT.matrix, $b.vector, $x.vector);
   fail X::Libgsl.new: errno => $ret, error => "Error in cholesky-band-solve" if $ret ≠ GSL_SUCCESS;
@@ -1165,14 +1165,14 @@ sub cholesky-band-svx(Math::Libgsl::Matrix $LLT where *.matrix.size1 == $LLT.mat
                       Math::Libgsl::Vector $x where *.vector.size == $LLT.matrix.size1
                       --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-svx: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-svx: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_cholesky_band_svx($LLT.matrix, $x.vector);
 }
 
 sub cholesky-band-invert(Math::Libgsl::Matrix $LLT where *.matrix.size1 == $LLT.matrix.size2
                          --> Math::Libgsl::Matrix) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-invert: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-invert: version < v2.6" if $gsl-version < v2.6;
   my Math::Libgsl::Matrix $Ainv .= new: $LLT.matrix.size1, $LLT.matrix.size2;
   my $ret = gsl_linalg_cholesky_band_invert($LLT.matrix, $Ainv.matrix);
   fail X::Libgsl.new: errno => $ret, error => "Error in cholesky-band-invert" if $ret ≠ GSL_SUCCESS;
@@ -1182,7 +1182,7 @@ sub cholesky-band-invert(Math::Libgsl::Matrix $LLT where *.matrix.size1 == $LLT.
 sub cholesky-band-unpack(Math::Libgsl::Matrix $LLT where *.matrix.size1 == $LLT.matrix.size2
                          --> Math::Libgsl::Matrix) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-unpack: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-unpack: version < v2.6" if $gsl-version < v2.6;
   my Math::Libgsl::Matrix $L .= new: $LLT.matrix.size1, $LLT.matrix.size2;
   my $ret = gsl_linalg_cholesky_band_unpack($LLT.matrix, $L.matrix);
   fail X::Libgsl.new: errno => $ret, error => "Error in cholesky-band-unpack" if $ret ≠ GSL_SUCCESS;
@@ -1191,7 +1191,7 @@ sub cholesky-band-unpack(Math::Libgsl::Matrix $LLT where *.matrix.size1 == $LLT.
 
 sub cholesky-band-rcond(Math::Libgsl::Matrix $LLT where *.matrix.size1 == $LLT.matrix.size2 --> Num) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-rcond: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in cholesky-band-rcond: version < v2.6" if $gsl-version < v2.6;
   my Math::Libgsl::Vector $work .= new: 3 * $LLT.matrix.size2;
   my num64 $rcond;
   my $ret = gsl_linalg_cholesky_band_rcond($LLT.matrix, $rcond, $work.vector);
@@ -1202,7 +1202,7 @@ sub cholesky-band-rcond(Math::Libgsl::Matrix $LLT where *.matrix.size1 == $LLT.m
 # Banded LDLT Decomposition v2.6
 sub ldlt-band-decomp(Math::Libgsl::Matrix $A where *.matrix.size1 == $A.matrix.size2 --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-band-decomp: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-band-decomp: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_ldlt_band_decomp($A.matrix);
 }
 
@@ -1210,7 +1210,7 @@ sub ldlt-band-solve(Math::Libgsl::Matrix $LDLT where *.matrix.size1 == $LDLT.mat
                     Math::Libgsl::Vector $b where *.vector.size == $LDLT.matrix.size1
                     --> Math::Libgsl::Vector) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-band-solve: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-band-solve: version < v2.6" if $gsl-version < v2.6;
   my Math::Libgsl::Vector $x .= new: $b.vector.size;
   my $ret = gsl_linalg_ldlt_band_solve($LDLT.matrix, $b.vector, $x.vector);
   fail X::Libgsl.new: errno => $ret, error => "Error in ldlt-band-solve" if $ret ≠ GSL_SUCCESS;
@@ -1221,13 +1221,13 @@ sub ldlt-band-svx(Math::Libgsl::Matrix $LDLT where *.matrix.size1 == $LDLT.matri
                   Math::Libgsl::Vector $x where *.vector.size == $LDLT.matrix.size1
                   --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-band-svx: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-band-svx: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_ldlt_band_svx($LDLT.matrix, $x.vector);
 }
 
 sub ldlt-band-unpack(Math::Libgsl::Matrix $LDLT where *.matrix.size1 == $LDLT.matrix.size2 --> List) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-band-unpack: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-band-unpack: version < v2.6" if $gsl-version < v2.6;
   my Math::Libgsl::Matrix $L .= new: $LDLT.matrix.size1, $LDLT.matrix.size2;
   my Math::Libgsl::Vector $D .= new: $LDLT.matrix.size1;
   my $ret = gsl_linalg_ldlt_band_unpack($LDLT.matrix, $L.matrix, $D.vector);
@@ -1237,7 +1237,7 @@ sub ldlt-band-unpack(Math::Libgsl::Matrix $LDLT where *.matrix.size1 == $LDLT.ma
 
 sub ldlt-band-rcond(Math::Libgsl::Matrix $LDLT where *.matrix.size1 == $LDLT.matrix.size2 --> Num) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-band-rcond: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-band-rcond: version < v2.6" if $gsl-version < v2.6;
   my Math::Libgsl::Vector $work .= new: 3 * $LDLT.matrix.size2;
   my num64 $rcond;
   my $ret = gsl_linalg_ldlt_band_rcond($LDLT.matrix, $rcond, $work.vector);
@@ -1262,7 +1262,7 @@ Math::Libgsl::LinearAlgebra - An interface to libgsl, the Gnu Scientific Library
 
 =head1 SYNOPSIS
 
-=begin code :lang<perl6>
+=begin code :lang<raku>
 
 use Math::Libgsl::LinearAlgebra;
 
@@ -2157,7 +2157,7 @@ The excellent C Library manual is available here L<https://www.gnu.org/software/
 
 This module requires the libgsl library to be installed. Please follow the instructions below based on your platform:
 
-=head2 Debian Linux and Ubuntu 20.04
+=head2 Debian Linux and Ubuntu 20.04+
 
 =begin code
 sudo apt install libgsl23 libgsl-dev libgslcblas0

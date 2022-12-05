@@ -1,4 +1,4 @@
-#!/usr/bin/env perl6
+#!/usr/bin/env raku
 
 use Test;
 use lib 'lib';
@@ -34,7 +34,7 @@ subtest 'LU decomposition' => {
   my Math::Libgsl::Matrix::Complex64 $A .= new(10, 10);
   my Math::Libgsl::Vector::Complex64 $b .= new(10);
   my Complex @res;
-  if $gsl-version > 2.5 {
+  if $gsl-version > v2.5 {
     @res = 0.6138245570473373+0.965768184280023i, 0.49709826125763357+0.529885402880609i,
     0.4616075318772346+0.7130337005946785i, 0.5799597676377743+0.6828025553841144i,
     0.9539215140976012+0.023655203636735678i, 0.2801101468503475+0.8695263534318656i,

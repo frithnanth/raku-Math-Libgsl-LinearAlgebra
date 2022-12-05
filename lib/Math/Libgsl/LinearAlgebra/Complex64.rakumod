@@ -1,6 +1,6 @@
 use v6;
 
-unit class Math::Libgsl::LinearAlgebra::Complex64:ver<0.0.2>:auth<cpan:FRITH>;
+unit class Math::Libgsl::LinearAlgebra::Complex64:ver<0.0.2>:auth<zef:FRITH>;
 
 use Math::Libgsl::Raw::LinearAlgebra :ALL;
 use NativeCall;
@@ -181,18 +181,18 @@ sub householder-chv(Complex $tau, Math::Libgsl::Vector::Complex64 $v, Math::Libg
 # Triangular Systems
 sub tri-cinvert(Int $Uplo, Int $Diag, Math::Libgsl::Matrix::Complex64 $A --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-decomp: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-decomp: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_complex_tri_invert($Uplo, $Diag, $A.matrix);
 }
 
 sub tri-cLHL(Math::Libgsl::Matrix::Complex64 $L --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-decomp: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-decomp: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_complex_tri_LHL($L.matrix);
 }
 
 sub tri-cUL(Math::Libgsl::Matrix::Complex64 $LU --> Int) is export
 {
-  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-decomp: version < v2.6" if $gsl-version < 2.6;
+  fail X::Libgsl.new: errno => GSL_FAILURE, error => "Error in ldlt-decomp: version < v2.6" if $gsl-version < v2.6;
   gsl_linalg_complex_tri_UL($LU.matrix);
 }
