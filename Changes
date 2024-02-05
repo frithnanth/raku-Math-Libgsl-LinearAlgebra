@@ -1,6 +1,7 @@
 Revision history for Math-Libgsl-LinearAlgebra
 
 {{$NEXT}}
+    - Drop the obsolete .absolute call :-)
 
 0.0.3  2022-12-05T12:11:47+01:00
     - Use zef ecosystem

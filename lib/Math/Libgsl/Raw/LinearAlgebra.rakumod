@@ -8,7 +8,7 @@ use Math::Libgsl::Raw::Matrix :ALL;
 use Math::Libgsl::Raw::Matrix::Complex64 :ALL;
 use Math::Libgsl::Raw::Permutation :ALL;
 
-constant GSLHELPER = %?RESOURCES<libraries/gslhelper>.absolute;
+constant GSLHELPER = %?RESOURCES<libraries/gslhelper>;
 
 sub LIB {
   run('/sbin/ldconfig', '-p', :chomp, :out)
